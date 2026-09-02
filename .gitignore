@@ -1,0 +1,26 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.python-version.local
+*.egg-info/
+dist/
+build/
+
+data/
+artifacts/
+wandb/
+outputs/
+eval_logs/
+*.mp4
+
+.env
+.hf_token
+.wandb
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

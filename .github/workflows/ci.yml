@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install CPU extras (no sim / no GPU)
+        run: uv sync --extra dev
+      - name: Ruff
+        run: uv run ruff check src tests && uv run ruff format --check src tests
+      - name: Pyright
+        run: uv run pyright
+      - name: Pytest
+        run: PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest
+      - name: Metric lock
+        run: |
+          uv run python -c "from pathlib import Path; from backstop.schema import load_metric_contract, DEFAULT_FALSE_STOP_BUDGET; c=load_metric_contract(Path('configs/metric.yaml')); assert c.false_stop_budget==DEFAULT_FALSE_STOP_BUDGET"

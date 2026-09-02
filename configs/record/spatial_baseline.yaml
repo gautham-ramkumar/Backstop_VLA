@@ -1,0 +1,34 @@
+seed: 0
+output_dir: artifacts/eval/spatial_baseline
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 1
+env:
+  type: libero
+  task: libero_spatial
+  task_ids: null
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 10
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 1
+  repo_id: local/backstop_spatial_baseline
+  root: data/lerobot/backstop_spatial_baseline
+wandb:
+  project: backstop
+  enabled: true
+  mode: offline
+tolerance:
+  min_success_rate: 0.70
+  max_success_rate: 0.90
+  fallback_num_steps: 1
+  enforce: true

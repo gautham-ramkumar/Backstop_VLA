@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "backstop"
+version = "0.1.0"
+description = "Runtime failure prediction for vision-language-action robot policies"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Gautham Ramkumar" }]
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+sim = [
+    "lerobot[libero,smolvla]>=0.6.1,<0.7",
+    "mujoco==3.3.2",
+    "wandb>=0.19",
+]
+dev = [
+    "ruff>=0.11",
+    "pyright>=1.1.400",
+    "pytest>=8.3",
+    "pre-commit>=4.2",
+]
+
+[project.scripts]
+backstop-eval = "backstop.eval.cli:main"
+backstop-record = "backstop.record.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/backstop"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/backstop", "configs", "docs", "README.md"]
+
+[tool.uv]
+default-groups = []
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+include = ["src", "tests"]
+exclude = [".venv", "data", "artifacts", "wandb"]
+venvPath = "."
+venv = ".venv"
+reportMissingImports = "none"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q -p no:launch_testing"
+filterwarnings = ["ignore::DeprecationWarning"]

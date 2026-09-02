@@ -1,0 +1,11 @@
+# Locked in week 1 before any guard number exists. Changing this value
+# requires a new ADR, not a silent edit. See docs/adr/001-metric.md.
+false_stop_budget: 0.05
+headline_metric: detection_at_false_stop
+forbidden_headlines:
+  - accuracy
+  - raw_accuracy
+  - success_rate
+secondary_metrics:
+  - mean_lead_time_steps
+  - detection_curve
