@@ -15,12 +15,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-import numpy as np
 import pytest
 
+# Everything below the guards, numpy included: it arrives via the `sim` extra
+# (through lerobot), so the CPU-only CI job must skip this module rather than
+# fail to collect it.
 torch = pytest.importorskip("torch")
 pytest.importorskip("lerobot")
 
+import numpy as np  # noqa: E402
 from lerobot.envs.configs import LiberoEnv  # noqa: E402
 
 from backstop.config import PipelineConfig  # noqa: E402
