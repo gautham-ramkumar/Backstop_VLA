@@ -25,8 +25,21 @@ Python is **3.12**, not 3.11: LeRobot 0.6.x requires `>=3.12`. MuJoCo is pinned 
 | Lint | `just lint` |
 | Unit + contract tests (CPU) | `just test` |
 | Smoke (task 0, 2 episodes, K=4) | `just smoke` |
+| **Verify the smoke output** | `just verify-smoke` |
 | Spatial baseline (10×10, no dataset) | `just eval-spatial` |
 | Record Spatial corpus (K=1) | `just record-spatial` |
+| **Verify the corpus** | `just verify-baseline` |
+
+`just` is not installed on this host; the `uv run` equivalents below work as-is.
+
+## Verification gate
+
+`scripts/verify_corpus.py` is not optional. Every check in it maps to a bug that
+once shipped silently — zeroed action chunks, a state vector holding
+rotation-matrix entries, upside-down video, actions that skipped the unnormalize
+step. None of them raise; all of them produce a plausible-looking dataset.
+
+Run it after **every** recording run. Do not move to the next phase on a FAIL.
 
 Equivalent without `just`:
 

@@ -33,18 +33,22 @@ def load_lerobot_policy(cfg: PipelineConfig, env_cfg: Any) -> Any:
         policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy.path, **load_kwargs)
     except TypeError:
         policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy.path)
-    policy_cfg.pretrained_path = cfg.policy.path
+    # Declared as `Path | None`; lerobot only truth-tests it and forwards it as an
+    # HF `pretrained_name_or_path`, so a Hub repo id round-trips through Path fine.
+    policy_cfg.pretrained_path = Path(cfg.policy.path)
     policy_cfg.device = cfg.policy.device
+    # n_action_steps/num_steps live on the concrete policy config (SmolVLAConfig),
+    # not the PreTrainedConfig base -- the hasattr guard is the runtime contract.
     if hasattr(policy_cfg, "n_action_steps"):
-        policy_cfg.n_action_steps = cfg.policy.n_action_steps
+        policy_cfg.n_action_steps = cfg.policy.n_action_steps  # type: ignore[attr-defined]
     if hasattr(policy_cfg, "num_steps"):
-        policy_cfg.num_steps = cfg.policy.num_steps
+        policy_cfg.num_steps = cfg.policy.num_steps  # type: ignore[attr-defined]
     policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
     policy.eval()
     preprocessor_overrides = {"device_processor": {"device": str(policy.config.device)}}
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy_cfg,
-        pretrained_path=policy_cfg.pretrained_path,
+        pretrained_path=str(policy_cfg.pretrained_path),
         preprocessor_overrides=preprocessor_overrides,
     )
     return policy, preprocessor, postprocessor, policy_cfg
@@ -70,7 +74,7 @@ def run_pipeline(cfg: PipelineConfig) -> dict[str, Any]:
         num_steps=cfg.policy.num_steps,
     )
 
-    dataset = create_dataset(cfg) if cfg.record.enabled else None
+    dataset = create_dataset(cfg, fps=int(lerobot_env_cfg.fps)) if cfg.record.enabled else None
     try:
         stats = run_episodes(
             envs=envs,

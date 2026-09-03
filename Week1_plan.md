@@ -11,8 +11,11 @@ todos:
   - id: adapter-schema
     content: Pydantic episode schema + SmolVLA PolicyAdapter Protocol; OpenVLA stub only
     status: completed
+  - id: rollout-contract
+    content: "CPU contract tests for the record loop (tests/unit/test_rollout_loop.py): chunk capture, postprocessor applied, 8-dim state with gripper qpos, 180-degree image flip, K-independent trajectory. Plus scripts/verify_corpus.py as the post-run gate."
+    status: completed
   - id: smoke
-    content: "just smoke: libero_spatial task 0, 2 episodes, OSMesa, batch_size=1, K=4 samples on those two eps"
+    content: "just smoke: libero_spatial task 0, 2 episodes, OSMesa, batch_size=1, K=4 samples on those two eps; then just verify-smoke"
     status: in_progress
   - id: baseline-eval
     content: "just eval-spatial: 10x10 Spatial, log eval.json + W&B; lock recipe if num_steps fallback needed"
@@ -85,11 +88,15 @@ flowchart TD
 
 Workspace today is only [Backstop_Project_Brief.pdf](Backstop_Project_Brief.pdf). Add:
 
+> **Correction (superseded by ADR-002):** Python is **3.12**, not 3.11. LeRobot
+> 0.6.x requires `>=3.12`; 3.11 will not install it. The layout below is otherwise
+> accurate, plus `scripts/verify_corpus.py` and `tests/unit/test_rollout_loop.py`.
+
 ```text
 backstop/
-  pyproject.toml              # uv, python 3.11, ruff, pyright, pytest
+  pyproject.toml              # uv, python 3.12, ruff, pyright, pytest
   uv.lock
-  .python-version             # 3.11 (LeRobot; host is 3.12 — do not use 3.12)
+  .python-version             # 3.12 (LeRobot 0.6.x requires >=3.12)
   justfile
   Dockerfile                  # FROM huggingface/lerobot-gpu + libero-assets + this repo
   .github/workflows/ci.yml

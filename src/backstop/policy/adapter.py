@@ -48,8 +48,26 @@ class SmolVLAAdapter:
         self.chunk_size = int(getattr(cfg, "chunk_size", 50))
         action_ft = cfg.output_features.get("action")
         self.action_dim = int(action_ft.shape[0]) if action_ft is not None else 7
+        self.max_action_dim = int(getattr(cfg, "max_action_dim", self.action_dim))
+        self._device = str(getattr(cfg, "device", None) or "cpu")
         self._last_chunk: Any | None = None
         self._wrap_predict()
+
+    def noise_for(self, *, episode_seed: int, step: int, index: int, batch_size: int = 1) -> Any:
+        """Deterministic flow noise for sample `index` at `step`.
+
+        Drawn from a dedicated generator rather than the global RNG so that the
+        executed chunk (index 0) is identical whatever K is. Without this, a K=4
+        corpus and a K=1 baseline diverge at the same seed and a success-rate
+        shift cannot be attributed to the perturbation rather than the sampling.
+        """
+        import torch  # noqa: PLC0415
+
+        seed = (episode_seed * 1_000_003 + step * 1_009 + index) % (2**31 - 1)
+        generator = torch.Generator(device="cpu").manual_seed(seed)
+        shape = (batch_size, self.chunk_size, self.max_action_dim)
+        noise = torch.randn(shape, generator=generator, dtype=torch.float32)
+        return noise.to(self._device)
 
     def _wrap_predict(self) -> None:
         # select_action fills the queue via `_get_action_chunk`, not `predict_action_chunk`.
@@ -72,9 +90,9 @@ class SmolVLAAdapter:
             self._policy.reset()
         self._last_chunk = None
 
-    def select_action(self, observation: dict[str, Any]) -> Any:
+    def select_action(self, observation: dict[str, Any], *, noise: Any = None) -> Any:
         """Raw policy tensor. Caller must run the LeRobot postprocessor before the env."""
-        return self._policy.select_action(observation)
+        return self._policy.select_action(observation, noise=noise)
 
     def last_action_chunk(self) -> Any:
         np = _np()
@@ -82,8 +100,20 @@ class SmolVLAAdapter:
             return np.zeros((self.chunk_size, self.action_dim), dtype=np.float32)
         return self._last_chunk
 
-    def sample_chunks(self, observation: dict[str, Any], k: int) -> Any:
-        """K independent flow-matching chunks. Index 0 is the executed chunk."""
+    def sample_chunks(
+        self,
+        observation: dict[str, Any],
+        k: int,
+        *,
+        episode_seed: int | None = None,
+        step: int | None = None,
+    ) -> Any:
+        """K flow-matching chunks. Index 0 is the executed chunk.
+
+        Restores `_last_chunk` and the policy queues afterwards: the extra
+        predictions run through the same wrapped `_get_action_chunk` that
+        captures the executed chunk, so sampling must not leave a trace.
+        """
         np = _np()
         executed = self.last_action_chunk()
         samples = [executed]
@@ -97,12 +127,17 @@ class SmolVLAAdapter:
         if queues is not None:
             self._policy._queues = queues
         try:
-            for _ in range(k - 1):
-                chunk = predict(observation)
+            for index in range(1, k):
+                if episode_seed is None or step is None:
+                    noise = None
+                else:
+                    noise = self.noise_for(episode_seed=episode_seed, step=step, index=index)
+                chunk = predict(observation, noise=noise)
                 samples.append(_chunk_to_numpy(chunk, self.chunk_size, self.action_dim))
         finally:
             if saved_queues is not None:
                 self._policy._queues = saved_queues
+            self._last_chunk = executed
         return np.stack(samples[:k], axis=0).astype(np.float32)
 
     @property

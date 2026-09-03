@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import shutil
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +20,12 @@ def dataset_features(k_samples: int, image_hw: tuple[int, int] = (360, 360)) -> 
     return lerobot_features(k_samples, image_hw)
 
 
-def create_dataset(cfg: PipelineConfig, image_hw: tuple[int, int] = (360, 360)) -> Any:
+def create_dataset(cfg: PipelineConfig, image_hw: tuple[int, int] = (360, 360), *, fps: int) -> Any:
+    """`fps` must be the env control rate (LIBERO: 20 Hz), one row per control step.
+
+    Not the 30 that was hardcoded here, and not `metadata["render_fps"]` (80) --
+    a wrong value silently desyncs viewer playback and lead-time-in-seconds.
+    """
     from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: PLC0415
 
     root = Path(cfg.record.root)
@@ -29,7 +33,7 @@ def create_dataset(cfg: PipelineConfig, image_hw: tuple[int, int] = (360, 360)) 
         shutil.rmtree(root)
     return LeRobotDataset.create(
         repo_id=cfg.record.repo_id,
-        fps=30,
+        fps=int(fps),
         features=dataset_features(cfg.record.k_samples, image_hw),
         robot_type="panda",
         root=str(root),
@@ -65,7 +69,7 @@ def run_episodes(
         for task_id, vec_env in sorted(task_map.items()):
             for _ep in range(cfg.eval.n_episodes):
                 seed = start_seed + episode_index
-                success = _rollout_one(
+                success, n_steps = _rollout_one(
                     vec_env=vec_env,
                     adapter=adapter,
                     env_pre=env_pre,
@@ -90,15 +94,17 @@ def run_episodes(
                         "task_id": int(task_id),
                         "seed": seed,
                         "success": bool(success),
+                        "n_steps": int(n_steps),
                     }
                 )
                 episode_index += 1
                 logger.info(
-                    "episode %s suite=%s task=%s seed=%s success=%s running=%.1f%%",
+                    "episode %s suite=%s task=%s seed=%s steps=%s success=%s running=%.1f%%",
                     episode_index,
                     suite_name,
                     task_id,
                     seed,
+                    n_steps,
                     success,
                     100.0 * n_success / n_total,
                 )
@@ -132,7 +138,8 @@ def _rollout_one(
     seed: int,
     suite_name: str,
     task_id: int,
-) -> bool:
+) -> tuple[bool, int]:
+    """Returns (success, n_steps). Episode length separates timeouts from early ends."""
     adapter.reset()
     observation, _info = vec_env.reset(seed=[seed], options={new_rollout_option: True})
     try:
@@ -148,7 +155,6 @@ def _rollout_one(
     import torch  # noqa: PLC0415
 
     while not bool(done[0]) and step < max_steps:
-        raw_obs = deepcopy(observation)
         observation = preprocess_observation(observation)
         try:
             observation["task"] = list(vec_env.call("task_description"))
@@ -156,11 +162,16 @@ def _rollout_one(
             observation["task"] = [task_desc]
 
         observation = env_pre(observation)
+        # Capture after env_pre (state assembled, images flipped) but before `pre`,
+        # which normalizes. The corpus stores what the policy saw, in real units.
+        frame_obs = _capture_obs(observation)
         observation = pre(observation)
         with torch.inference_mode():
-            action = adapter.select_action(observation)
-        chunk = adapter.last_action_chunk()
-        samples = adapter.sample_chunks(observation, k)
+            action = adapter.select_action(
+                observation, noise=adapter.noise_for(episode_seed=seed, step=step, index=0)
+            )
+            chunk = adapter.last_action_chunk()
+            samples = adapter.sample_chunks(observation, k, episode_seed=seed, step=step)
 
         action = post(action)
         transition = {action_key: action}
@@ -179,7 +190,7 @@ def _rollout_one(
 
         if dataset is not None:
             frame = _build_frame(
-                raw_obs=raw_obs,
+                frame_obs=frame_obs,
                 action=stepped[0],
                 chunk=chunk,
                 samples=samples,
@@ -201,12 +212,12 @@ def _rollout_one(
 
     if dataset is not None:
         dataset.save_episode()
-    return bool(success)
+    return bool(success), step
 
 
 def _build_frame(
     *,
-    raw_obs: dict[str, Any],
+    frame_obs: dict[str, np.ndarray],
     action: np.ndarray,
     chunk: np.ndarray,
     samples: np.ndarray,
@@ -214,11 +225,10 @@ def _build_frame(
     task: str,
     k: int,
 ) -> dict[str, Any]:
-    image, image2, state = _extract_obs(raw_obs)
     return {
-        "observation.images.image": image,
-        "observation.images.image2": image2,
-        "observation.state": state,
+        "observation.images.image": frame_obs["image"],
+        "observation.images.image2": frame_obs["image2"],
+        "observation.state": frame_obs["state"],
         "action": np.asarray(action, dtype=np.float32).reshape(ACTION_DIM),
         "action_chunk": np.asarray(chunk, dtype=np.float32).reshape(CHUNK_SIZE, ACTION_DIM),
         "action_chunk_samples": np.asarray(samples, dtype=np.float32).reshape(
@@ -229,67 +239,41 @@ def _build_frame(
     }
 
 
-def _extract_obs(raw_obs: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    pixels = raw_obs.get("pixels")
-    image = None
-    image2 = None
-    if isinstance(pixels, dict):
-        preferred = ["agentview_image", "image", "robot0_eye_in_hand_image", "image2"]
-        ordered = [k for k in preferred if k in pixels] + [k for k in pixels if k not in preferred]
-        first = pixels[ordered[0]]
-        second = pixels[ordered[1]] if len(ordered) > 1 else first
-        image = _to_hwc_uint8(first)
-        image2 = _to_hwc_uint8(second)
-    elif pixels is not None:
-        image = _to_hwc_uint8(pixels)
-        image2 = image
-    if image is None:
-        image = np.zeros((360, 360, 3), dtype=np.uint8)
-    if image2 is None:
-        image2 = image
-    state = raw_obs.get("agent_pos")
-    if state is None:
-        state = raw_obs.get("robot_state")
-    state_np = _pad_vec(_first_numeric(state), STATE_DIM)
-    return image, image2, state_np
+def _capture_obs(observation: dict[str, Any]) -> dict[str, np.ndarray]:
+    """Read the frame straight off the processed observation.
 
+    `env_pre` (LiberoProcessorStep) has already assembled `observation.state` as
+    eef_pos(3) + eef_axisangle(3) + gripper_qpos(2) and rotated the images 180
+    degrees to match the checkpoint's camera convention. Rebuilding either of
+    those from the raw env dict is how the corpus ends up storing rotation-matrix
+    entries and upside-down video, so read them rather than reconstruct them.
+    """
+    from lerobot.utils.constants import OBS_IMAGES, OBS_STATE  # noqa: PLC0415
 
-def _first_numeric(value: Any) -> np.ndarray:
-    if value is None:
-        return np.zeros(STATE_DIM, dtype=np.float32)
-    if isinstance(value, dict):
-        for nested in value.values():
-            try:
-                return _first_numeric(nested)
-            except (TypeError, ValueError):
-                continue
-        return np.zeros(STATE_DIM, dtype=np.float32)
-    array = _as_numpy(value)
-    return np.asarray(array, dtype=np.float32)
+    state = _as_numpy(observation[OBS_STATE])[0].astype(np.float32)
+    if state.shape != (STATE_DIM,):
+        raise ValueError(
+            f"{OBS_STATE} has shape {state.shape}, expected ({STATE_DIM},). "
+            "The env preprocessor changed; update schema.STATE_DIM deliberately."
+        )
+    image = _to_hwc_uint8(observation[f"{OBS_IMAGES}.image"])
+    image2_key = f"{OBS_IMAGES}.image2"
+    image2 = _to_hwc_uint8(observation[image2_key]) if image2_key in observation else image
+    return {"image": image, "image2": image2, "state": state}
 
 
 def _to_hwc_uint8(img: Any) -> np.ndarray:
+    """(B, C, H, W) float32 in [0, 1] -> (H, W, C) uint8, exactly inverting preprocessing."""
     array = _as_numpy(img)
     if array.ndim == 4:
         array = array[0]
     if array.ndim == 3 and array.shape[0] in (1, 3) and array.shape[-1] not in (1, 3):
         array = np.transpose(array, (1, 2, 0))
     if array.dtype != np.uint8:
-        max_v = float(array.max()) if array.size else 0.0
-        if max_v <= 1.0:
-            array = array * 255.0
-        array = np.clip(array, 0, 255).astype(np.uint8)
+        array = np.clip(np.round(array * 255.0), 0, 255).astype(np.uint8)
     if array.ndim == 2:
         array = np.repeat(array[..., None], 3, axis=-1)
     return np.ascontiguousarray(array)
-
-
-def _pad_vec(value: np.ndarray, dim: int) -> np.ndarray:
-    flat = np.asarray(value, dtype=np.float32).reshape(-1)
-    out = np.zeros((dim,), dtype=np.float32)
-    n = min(dim, flat.shape[0])
-    out[:n] = flat[:n]
-    return out
 
 
 def _read_success(info: dict[str, Any], current: bool) -> bool:
@@ -314,7 +298,14 @@ def _read_success(info: dict[str, Any], current: bool) -> bool:
 
 
 def _unnormalize_array(post: Any, array: np.ndarray) -> np.ndarray:
-    """Best-effort policy-space → env-space using the LeRobot postprocessor."""
+    """Policy-space → env-space using the LeRobot postprocessor.
+
+    On failure this returns the array unchanged, which leaves the stored chunk in
+    policy space while the executed action is in env space -- the two silently
+    stop being comparable. That is unrecoverable after the fact, so make the
+    fallback loud. `verify_corpus.py` catches it too, by asserting
+    `action == action_chunk[0]`.
+    """
     try:
         import torch  # noqa: PLC0415
 
@@ -325,7 +316,15 @@ def _unnormalize_array(post: Any, array: np.ndarray) -> np.ndarray:
             return np.asarray(_as_numpy(out), dtype=np.float32).reshape(k, t, -1)
         out = post(tensor)
         return np.asarray(_as_numpy(out), dtype=np.float32).reshape(array.shape)
-    except (TypeError, ValueError, RuntimeError, AttributeError):
+    except (TypeError, ValueError, RuntimeError, AttributeError) as exc:
+        logger.warning(
+            "UNNORMALIZE FAILED on shape %s (%s: %s). Stored chunks are in POLICY "
+            "space while executed actions are in ENV space -- this corpus is not "
+            "usable for chunk-based signals. Fix before recording further.",
+            np.shape(array),
+            type(exc).__name__,
+            exc,
+        )
         return np.asarray(array, dtype=np.float32)
 
 

@@ -23,3 +23,26 @@ jobs:
       - name: Metric lock
         run: |
           uv run python -c "from pathlib import Path; from backstop.schema import load_metric_contract, DEFAULT_FALSE_STOP_BUDGET; c=load_metric_contract(Path('configs/metric.yaml')); assert c.false_stop_budget==DEFAULT_FALSE_STOP_BUDGET"
+
+  rollout-contract:
+    # The rollout-loop tests need lerobot (CPU only -- no GPU, no MuJoCo, no weights).
+    # Without this job they silently `importorskip` and the loop stays untested in CI,
+    # which is how four wiring bugs shipped green in week 1.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install with sim extras (CPU torch)
+        env:
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+        run: uv sync --extra dev --extra sim
+      - name: Rollout contract tests
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/unit/test_rollout_loop.py -v
+      - name: Fail if the contract tests were skipped
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/unit/test_rollout_loop.py \
+            -q --no-header -rs 2>&1 | tee /tmp/out
+          grep -q "skipped" /tmp/out && { echo "Contract tests SKIPPED -- lerobot missing"; exit 1; } || true

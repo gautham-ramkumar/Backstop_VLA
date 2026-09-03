@@ -28,3 +28,13 @@ eval-spatial:
 
 record-spatial:
 	uv run backstop-record --config configs/record/spatial_baseline.yaml
+
+verify-smoke:
+	uv run python scripts/verify_corpus.py \
+	  --artifacts artifacts/eval/spatial_smoke \
+	  --dataset data/lerobot/backstop_spatial_smoke
+
+verify-baseline:
+	uv run python scripts/verify_corpus.py \
+	  --artifacts artifacts/eval/spatial_baseline \
+	  --dataset data/lerobot/backstop_spatial_baseline

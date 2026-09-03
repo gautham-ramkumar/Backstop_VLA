@@ -6,7 +6,7 @@ policy:
   revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
   device: cuda
   n_action_steps: 1
-  num_steps: 1
+  num_steps: 10
 env:
   type: libero
   task: libero_spatial

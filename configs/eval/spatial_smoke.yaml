@@ -6,7 +6,7 @@ policy:
   revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
   device: cuda
   n_action_steps: 1
-  num_steps: 1
+  num_steps: 10
 env:
   type: libero
   task: libero_spatial
@@ -27,8 +27,10 @@ wandb:
   project: backstop
   enabled: true
   mode: offline
+# Smoke gate is "did the loop run end to end", not "did it score".
+# 2 episodes cannot resolve a 70-90% band; the baseline config owns tolerance.
 tolerance:
-  min_success_rate: 0.70
-  max_success_rate: 0.90
+  min_success_rate: 0.0
+  max_success_rate: 1.0
   fallback_num_steps: 1
   enforce: false

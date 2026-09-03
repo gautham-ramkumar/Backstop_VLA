@@ -52,3 +52,30 @@ SmolVLA is flow-matching. “Action distribution” means K independent chunks w
 - Smoke (2 episodes): `k_samples=4`
 - Full Spatial record: `k_samples=1` (executed chunk only)
 - Week 2 perturbation corpus: `k_samples=4`
+
+**K must not perturb the trajectory.** Flow noise is drawn from a dedicated
+`torch.Generator` seeded on `(episode_seed, step, sample_index)`, not from the
+global RNG (`SmolVLAAdapter.noise_for`). Sample 0 is the executed chunk, so a
+K=1 run and a K=4 run at the same seed produce a bit-identical trajectory.
+
+Without this the week-2 K=4 corpus and the week-1 K=1 baseline diverge at the
+same seed, and any success-rate gap is unattributable — you cannot tell a
+perturbation effect from a sampling artifact. Pinned by
+`test_executed_trajectory_is_independent_of_k`.
+
+## Recording contract
+
+`n_action_steps` is provenance-only. The loop re-predicts a full chunk every
+control step and executes its first action, which is what `n_action_steps=1`
+means operationally.
+
+Frames are captured **after** the env preprocessor and **before** the policy
+preprocessor. `LiberoProcessorStep` assembles `observation.state` as
+eef_pos(3) + eef_axisangle(3) + gripper_qpos(2) and rotates images 180° for the
+checkpoint's camera convention; the policy preprocessor then normalizes. The
+corpus stores what the policy saw, in real units. Reconstructing either field
+from the raw env dict is how week 1 first shipped rotation-matrix entries as
+"state" and upside-down video.
+
+Dataset `fps` is the env control rate (**20 Hz**), one row per control step —
+not 30, and not `metadata["render_fps"]` (80).
