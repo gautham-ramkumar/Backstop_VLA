@@ -130,3 +130,102 @@ def close_libero(envs: dict[str, dict[int, Any]]) -> None:
     from lerobot.envs import close_envs  # noqa: PLC0415
 
     close_envs(envs)
+
+
+def libero_control_env(vec_env: Any, index: int = 0) -> Any:
+    """The LIBERO `ControlEnv` behind a LeRobot vector env.
+
+    `make_libero_envs` builds a SyncVectorEnv, so sub-envs live in this process and
+    the simulator is directly reachable: sub-env -> `.unwrapped` (LeRobot's gym
+    `LiberoEnv`) -> `._env` (LIBERO's `OffScreenRenderEnv`, an `ControlEnv`
+    subclass carrying `get_sim_state` / `regenerate_obs_from_state`).
+
+    Raises rather than returning None. Every caller here is capturing data that
+    cannot be recovered without re-running the episode, so a missing simulator must
+    stop the run, not degrade it.
+    """
+    try:
+        inner = vec_env.envs[index].unwrapped._env
+    except (AttributeError, IndexError, TypeError) as exc:
+        raise RuntimeError(
+            f"Cannot reach the LIBERO ControlEnv behind {type(vec_env).__name__}[{index}]. "
+            "This path assumes in-process sub-envs (use_async_envs=False); an async "
+            "vector env would need the call routed through `vec_env.call` instead."
+        ) from exc
+    if inner is None:
+        raise RuntimeError(
+            "LiberoEnv._env is None -- the simulator is built lazily on first reset(). "
+            "Capture sim state after reset, not before."
+        )
+    for method in ("get_sim_state", "regenerate_obs_from_state"):
+        if not callable(getattr(inner, method, None)):
+            raise RuntimeError(f"{type(inner).__name__} has no {method}(); LIBERO API changed.")
+    return inner
+
+
+def sim_state(vec_env: Any, index: int = 0) -> Any:
+    """Flattened MuJoCo state (time + qpos + qvel) as float64.
+
+    Privileged. Permitted for ground-truth labels, onset annotation, and
+    counterfactual branching; forbidden as guard input (ADR-003). It is kept out of
+    the LeRobot dataset so that week-3 signal code cannot reach it by accident.
+    """
+    import numpy as np  # noqa: PLC0415
+
+    return np.asarray(libero_control_env(vec_env, index).get_sim_state(), dtype=np.float64)
+
+
+_RENDER_TIMED = "_backstop_render_timed"
+
+
+def instrument_render(vec_env: Any, timer: Any, index: int = 0) -> bool:
+    """Time the OSMesa camera renders that happen inside `vec_env.step`.
+
+    Rendering is not a separable call from the loop's point of view. Robosuite's
+    `MujocoEnv.step` runs the physics substeps and samples the camera observables
+    in the same loop, so a stopwatch around `vec_env.step` charges both to one
+    number -- and the two point week 2 in opposite directions, because a
+    render-bound step makes K=4 nearly free while a physics-bound one does not.
+
+    The hook wraps the bound `MjSim.render`, which is the exact call each camera
+    observable makes, so `env_render` is camera time and nothing else. Physics
+    then falls out as `env_step - env_render`.
+
+    Call once per episode, not once per run: `hard_reset` is on by default, so
+    LIBERO rebuilds the model and the simulator on every reset and a hook
+    installed at startup is discarded by the first one. Idempotent via a flag on
+    the sim object, since re-wrapping an already-wrapped render would nest the
+    stopwatch and count the same microseconds once per layer.
+
+    Returns whether the hook is in place. Unlike privileged capture, this one
+    degrades rather than raises: a missing stage in a diagnostic table is not
+    worth killing a six-hour recording run over, and the table reports the gap
+    as unaccounted time anyway.
+    """
+    try:
+        sim = getattr(libero_control_env(vec_env, index).env, "sim", None)
+        if sim is None or not callable(getattr(sim, "render", None)):
+            return False
+        if getattr(sim, _RENDER_TIMED, False):
+            return True
+        inner = sim.render
+
+        def timed(*args: Any, **kwargs: Any) -> Any:
+            with timer("env_render"):
+                return inner(*args, **kwargs)
+
+        sim.render = timed
+        setattr(sim, _RENDER_TIMED, True)
+    except (RuntimeError, AttributeError, TypeError):
+        return False
+    return True
+
+
+def restore_sim_state(vec_env: Any, state: Any, index: int = 0) -> Any:
+    """Set the simulator to `state` and return the observation consistent with it.
+
+    The same call LIBERO uses to apply an init state on every reset
+    (`set_init_state` is an alias of `regenerate_obs_from_state`), so this is not a
+    new code path. Returns the raw LIBERO observation dict, not a LeRobot one.
+    """
+    return libero_control_env(vec_env, index).regenerate_obs_from_state(state)

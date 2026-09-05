@@ -29,6 +29,9 @@ eval-spatial:
 record-spatial:
 	uv run backstop-record --config configs/record/spatial_baseline.yaml
 
+benchmark:
+	uv run python scripts/benchmark_throughput.py --k 1,4 --episodes 3
+
 verify-smoke:
 	uv run python scripts/verify_corpus.py \
 	  --artifacts artifacts/eval/spatial_smoke \

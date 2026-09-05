@@ -38,6 +38,15 @@ class RecordYamlConfig(BaseModel):
     k_samples: int = Field(default=1, ge=1)
     repo_id: str = "local/backstop"
     root: str = "data/lerobot/backstop"
+    # Week 1 unconditionally rmtree'd `root`, so a stray re-run destroyed hours of GPU
+    # time in silence. `fail` is the default because the safe action is the one you get
+    # when you have not thought about it; `overwrite` must be typed on purpose.
+    on_existing: Literal["fail", "resume", "overwrite"] = "fail"
+    shard: str | None = None
+    # Privileged sim state: outside the LeRobot dataset by construction, so week-3
+    # signal code cannot reach it. Off by default; every week-2 corpus config sets it.
+    privileged: bool = False
+    privileged_root: str = "data/privileged"
 
 
 class WandbYamlConfig(BaseModel):

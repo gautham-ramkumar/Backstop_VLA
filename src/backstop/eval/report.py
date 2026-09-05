@@ -54,6 +54,18 @@ def write_eval_report(
     return path
 
 
+def write_timing_report(*, output_dir: Path, timing: dict[str, Any]) -> Path:
+    """Write the per-stage throughput breakdown beside the eval report.
+
+    Its own file rather than a key in `eval.json`: that payload is a frozen
+    week-1 contract, and how long a run took is not a result about the policy.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "timing.json"
+    path.write_text(json.dumps(timing, indent=2) + "\n")
+    return path
+
+
 def write_guard_report(
     *,
     output_dir: Path,

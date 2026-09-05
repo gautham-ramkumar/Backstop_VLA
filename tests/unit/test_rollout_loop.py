@@ -173,7 +173,7 @@ class CaptureDataset:
         self.finalized = True
 
 
-def _run(tmp_path, k_samples: int):
+def _run(tmp_path, k_samples: int, *, n_episodes: int = 1, skip_episodes: int = 0):
     image = (np.arange(IMAGE_HW * IMAGE_HW * 3) % 251).reshape(IMAGE_HW, IMAGE_HW, 3)
     image = image.astype(np.uint8)
 
@@ -189,7 +189,7 @@ def _run(tmp_path, k_samples: int):
             "output_dir": str(tmp_path),
             "policy": {"type": "smolvla", "path": "fake", "device": "cpu"},
             "env": {"type": "libero", "task": "libero_spatial", "task_ids": [0]},
-            "eval": {"n_episodes": 1, "batch_size": 1},
+            "eval": {"n_episodes": n_episodes, "batch_size": 1},
             "record": {"enabled": True, "k_samples": k_samples, "root": str(tmp_path / "ds")},
         }
     )
@@ -206,6 +206,7 @@ def _run(tmp_path, k_samples: int):
         cfg=cfg,
         dataset=dataset,
         start_seed=0,
+        skip_episodes=skip_episodes,
     )
     return SimpleNamespace(
         frames=dataset.frames,
@@ -292,6 +293,51 @@ def test_k_samples_are_distinct_from_each_other(rollout) -> None:
     assert samples.shape[0] == 4
     for index in range(1, 4):
         assert not np.allclose(samples[index], samples[0]), f"sample {index} equals the executed"
+
+
+def test_resume_runs_exactly_the_tail_the_shard_is_missing(tmp_path) -> None:
+    """A crash at episode 3 of 5 must resume as 3,4 -- same seeds, same init states.
+
+    `seed = start_seed + episode_index`, so a resume that renumbered episodes would
+    re-run the tail under different seeds and quietly break matched pairing against
+    the clean arm.
+    """
+    full = _run(tmp_path / "full", k_samples=1, n_episodes=5)
+    tail = _run(tmp_path / "tail", k_samples=1, n_episodes=5, skip_episodes=3)
+
+    assert [row["episode_index"] for row in full.stats["episodes"]] == [0, 1, 2, 3, 4]
+    assert [row["episode_index"] for row in tail.stats["episodes"]] == [3, 4]
+    assert [row["seed"] for row in tail.stats["episodes"]] == [3, 4]
+    assert tail.stats["n_skipped"] == 3
+    assert tail.stats["partial"] is True
+
+    for resumed, original in zip(tail.stats["episodes"], full.stats["episodes"][3:], strict=True):
+        assert resumed == original, "resumed episode differs from the one it replaces"
+
+
+def test_an_unresumed_run_is_not_marked_partial(rollout) -> None:
+    """`partial` gates the tolerance check; a false positive would silence it."""
+    assert rollout.stats["partial"] is False
+    assert rollout.stats["n_skipped"] == 0
+
+
+def test_timing_counts_match_what_was_actually_recorded(rollout) -> None:
+    """A step counter that drifts from the frame count silently rescales every
+    projection built on s/step -- which on day 1 of week 2 is the corpus size."""
+    timing = rollout.stats["timing"]
+    assert timing["n_steps"] == len(rollout.frames)
+    assert timing["n_episodes"] == 1
+    assert timing["episode_steps"] == [len(rollout.frames)]
+    assert timing["stages"]["policy_select"]["calls"] == len(rollout.frames)
+    assert timing["stages"]["frame_write"]["calls"] == len(rollout.frames)
+
+
+def test_a_non_libero_env_does_not_take_down_the_run_for_want_of_a_stopwatch(rollout) -> None:
+    """`instrument_render` reaches into the robosuite sim, which this fake has not
+    got. Timing is diagnostic: unlike privileged capture it must degrade, not raise."""
+    assert "env_render" not in rollout.stats["timing"]["stages"]
+    assert rollout.stats["timing"]["derived"] == {}
+    assert len(rollout.frames) == DONE_AT
 
 
 def test_sampling_leaves_no_trace_on_the_executed_chunk(rollout) -> None:

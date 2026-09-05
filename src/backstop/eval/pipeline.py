@@ -14,10 +14,11 @@ from backstop.env.libero import (
     close_libero,
     make_libero_envs,
 )
-from backstop.eval.report import write_eval_report, write_failures_markdown
+from backstop.eval.report import write_eval_report, write_failures_markdown, write_timing_report
 from backstop.policy.adapter import SmolVLAAdapter
 from backstop.provenance import build_provenance
 from backstop.record.loop import create_dataset, run_episodes
+from backstop.record.timing import StageTimer
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,9 @@ def load_lerobot_policy(cfg: PipelineConfig, env_cfg: Any) -> Any:
     return policy, preprocessor, postprocessor, policy_cfg
 
 
-def run_pipeline(cfg: PipelineConfig) -> dict[str, Any]:
+def run_pipeline(cfg: PipelineConfig, timer: StageTimer | None = None) -> dict[str, Any]:
+    """Run the eval/record pipeline. `timer` is for benchmarks that want CUDA sync;
+    every run is timed either way and writes `timing.json`."""
     apply_render_backend(cfg.env.mujoco_gl)
     from lerobot.envs import make_env_pre_post_processors  # noqa: PLC0415
     from lerobot.utils.random_utils import set_seed  # noqa: PLC0415
@@ -74,7 +77,9 @@ def run_pipeline(cfg: PipelineConfig) -> dict[str, Any]:
         num_steps=cfg.policy.num_steps,
     )
 
-    dataset = create_dataset(cfg, fps=int(lerobot_env_cfg.fps)) if cfg.record.enabled else None
+    dataset, n_done = (
+        create_dataset(cfg, fps=int(lerobot_env_cfg.fps)) if cfg.record.enabled else (None, 0)
+    )
     try:
         stats = run_episodes(
             envs=envs,
@@ -88,12 +93,21 @@ def run_pipeline(cfg: PipelineConfig) -> dict[str, Any]:
             cfg=cfg,
             dataset=dataset,
             start_seed=cfg.seed,
+            skip_episodes=n_done,
+            timer=timer,
         )
     finally:
         close_libero(envs)
 
-    in_tol = (
-        cfg.tolerance.min_success_rate <= stats["success_rate"] <= cfg.tolerance.max_success_rate
+    # A resumed run measured only the tail of the shard. Judging that partial rate
+    # against the band would either pass a broken run or fail a good one; verify the
+    # completed shard with scripts/verify_corpus.py instead.
+    in_tol: bool | None = (
+        None
+        if stats.get("partial")
+        else cfg.tolerance.min_success_rate
+        <= stats["success_rate"]
+        <= cfg.tolerance.max_success_rate
     )
     provenance = build_provenance(
         cfg,
@@ -104,7 +118,14 @@ def run_pipeline(cfg: PipelineConfig) -> dict[str, Any]:
     provenance.n_success = stats["n_success"]
     provenance.n_failure = stats["n_failure"]
     provenance.in_tolerance = in_tol
-    if not in_tol:
+    if in_tol is None:
+        provenance.notes = (
+            f"RESUMED run: skipped {stats['n_skipped']} already-recorded episodes, so "
+            f"success_rate {stats['success_rate']:.3f} covers only the tail "
+            f"({stats['n_total']} episodes). Tolerance not evaluated. Verify the completed "
+            "shard with scripts/verify_corpus.py."
+        )
+    elif not in_tol:
         provenance.notes = (
             f"success_rate {stats['success_rate']:.3f} outside "
             f"[{cfg.tolerance.min_success_rate}, {cfg.tolerance.max_success_rate}]. "
@@ -113,8 +134,12 @@ def run_pipeline(cfg: PipelineConfig) -> dict[str, Any]:
         )
 
     write_eval_report(output_dir=output_dir, provenance=provenance, stats=stats)
+    write_timing_report(output_dir=output_dir, timing=stats["timing"])
     write_failures_markdown(output_dir / "failures.md", stats["episodes"])
-    if cfg.record.enabled:
+    # `docs/failures.md` is the week-1 natural-failure list that week-2 review reads.
+    # Mirroring every record run into it means the first perturbed shard silently
+    # replaces it. Only an unsharded, complete run may write there.
+    if cfg.record.enabled and cfg.record.shard is None and not stats.get("partial"):
         dest = Path("docs") / "failures.md"
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text((output_dir / "failures.md").read_text())

@@ -1,0 +1,58 @@
+# Week-2 clean arm: the same 100 episodes as week 1, re-recorded at K=4.
+#
+# The week-1 corpus is unusable for chunk disagreement -- at K=1 `sample_chunks`
+# short-circuits and stores four copies of the executed chunk, so the spread is
+# identically zero. This run replaces it as the clean control for corpus A.
+#
+# It is also the week's hard gate. Seeded flow noise (adapter.noise_for) makes the
+# executed trajectory independent of K, so this must reproduce week 1 exactly:
+# 70/100, episode for episode, against docs/week1_reference.csv. If it does not,
+# the seeding contract is wrong and no perturbation result would be attributable.
+#
+# Everything above `record` is byte-identical to configs/record/spatial_baseline.yaml
+# on purpose. Diff the two before running; the only intended differences are
+# k_samples, repo_id, root, on_existing and output_dir.
+seed: 0
+output_dir: artifacts/eval/spatial_clean_k4
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 10
+env:
+  type: libero
+  task: libero_spatial
+  task_ids: null
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 10
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 4
+  repo_id: local/backstop_spatial_clean_k4
+  root: data/lerobot/backstop_spatial_clean_k4
+  # New root, so `fail` costs nothing on a first run and protects the shard if the
+  # overnight job is started twice. Switch to `resume` to continue an interrupted run.
+  on_existing: fail
+  shard: clean
+  # `record.privileged` defaults to false, so leaving it unset would record the
+  # clean arm with no sim state at all -- and sim state is the one thing week 2
+  # cannot add later without re-running the GPU. The clean shard is also the one
+  # a counterfactual branching experiment would most want to branch from.
+  privileged: true
+  privileged_root: data/privileged
+wandb:
+  project: backstop
+  enabled: true
+  mode: offline
+tolerance:
+  min_success_rate: 0.70
+  max_success_rate: 0.90
+  fallback_num_steps: 1
+  enforce: true
