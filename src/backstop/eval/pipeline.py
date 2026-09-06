@@ -75,6 +75,7 @@ def run_pipeline(cfg: PipelineConfig, timer: StageTimer | None = None) -> dict[s
         policy,
         n_action_steps=cfg.policy.n_action_steps,
         num_steps=cfg.policy.num_steps,
+        batch_samples=cfg.policy.batch_samples,
     )
 
     dataset, n_done = (

@@ -68,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
         "config": str(args.config),
         "episodes_per_k": args.episodes,
         "warmup": bool(args.warmup),
+        "batch_samples": bool(args.batch_samples),
         "episode_length_model": lengths,
         "runs": runs,
         "projection": _project(runs, lengths, args),
@@ -100,6 +101,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=0.5,
         help="perturbed shards are tuned to this; it sets projected episode length",
     )
+    parser.add_argument(
+        "--no-batch-samples",
+        dest="batch_samples",
+        action="store_false",
+        help="draw the K-1 extras one at a time (the pre-batching baseline)",
+    )
     parser.add_argument("--no-warmup", dest="warmup", action="store_false")
     parser.add_argument(
         "--no-sync",
@@ -108,7 +115,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="do not drain the CUDA queue at stage boundaries (faster, blurrier)",
     )
     parser.add_argument("--keep-datasets", action="store_true", help=f"keep {BENCH_ROOT}")
-    parser.set_defaults(warmup=True, sync=True)
+    parser.set_defaults(warmup=True, sync=True, batch_samples=True)
     return parser.parse_args(argv)
 
 
@@ -173,6 +180,7 @@ def _config(k: int, args: argparse.Namespace, out_dir: Path, *, episodes: int, t
     from backstop.config import PipelineConfig  # noqa: PLC0415
 
     cfg = PipelineConfig.from_yaml(args.config)
+    cfg.policy.batch_samples = args.batch_samples
     cfg.record.k_samples = k
     cfg.eval.n_episodes = episodes
     if args.task_ids is not None:

@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Protocol, runtime_checkable
 
 from backstop.config import PolicyConfig
 
+logger = logging.getLogger(__name__)
+
 
 class UnsupportedPolicyError(NotImplementedError):
     """Raised when a deferred policy adapter is constructed."""
+
+
+class BatchedSamplingError(RuntimeError):
+    """Batched chunk sampling returned something structurally wrong.
+
+    Distinct from an OOM on purpose: OOM falls back to sequential sampling, and a
+    broken batch must not take that exit and record silently-degraded chunks.
+    """
 
 
 @runtime_checkable
@@ -38,8 +49,12 @@ class OpenVLAAdapter:
 class SmolVLAAdapter:
     """Wraps a LeRobot SmolVLA policy. Lazy-imports torch/lerobot."""
 
-    def __init__(self, policy: Any, *, n_action_steps: int, num_steps: int) -> None:
+    def __init__(
+        self, policy: Any, *, n_action_steps: int, num_steps: int, batch_samples: bool = True
+    ) -> None:
         self._policy = policy
+        self.batch_samples = batch_samples
+        self._oom_warned = False
         cfg = policy.config
         if n_action_steps is not None:
             cfg.n_action_steps = n_action_steps
@@ -113,32 +128,119 @@ class SmolVLAAdapter:
         Restores `_last_chunk` and the policy queues afterwards: the extra
         predictions run through the same wrapped `_get_action_chunk` that
         captures the executed chunk, so sampling must not leave a trace.
+
+        The K-1 extras go through `select_action`'s *sibling*, never through
+        `select_action` itself, so nothing here can move the executed trajectory.
         """
         np = _np()
         executed = self.last_action_chunk()
-        samples = [executed]
         predict = getattr(self, "_original_predict", None)
         if predict is None or k <= 1:
-            while len(samples) < k:
-                samples.append(executed)
-            return np.stack(samples[:k], axis=0).astype(np.float32)
+            return np.stack([executed] * k, axis=0).astype(np.float32)
+
         saved_queues = getattr(self._policy, "_queues", None)
         queues = _copy_queues(saved_queues)
         if queues is not None:
             self._policy._queues = queues
         try:
-            for index in range(1, k):
-                if episode_seed is None or step is None:
-                    noise = None
-                else:
-                    noise = self.noise_for(episode_seed=episode_seed, step=step, index=index)
-                chunk = predict(observation, noise=noise)
-                samples.append(_chunk_to_numpy(chunk, self.chunk_size, self.action_dim))
+            extras = self._extra_samples(observation, k, episode_seed, step, predict)
         finally:
             if saved_queues is not None:
                 self._policy._queues = saved_queues
+            # The wrapped `_get_action_chunk` fired again for the extras, so
+            # `_last_chunk` now holds a sample. Put the executed chunk back.
             self._last_chunk = executed
-        return np.stack(samples[:k], axis=0).astype(np.float32)
+        return np.stack([executed, *extras], axis=0).astype(np.float32)
+
+    def _extra_samples(
+        self,
+        observation: dict[str, Any],
+        k: int,
+        episode_seed: int | None,
+        step: int | None,
+        predict: Any,
+    ) -> list[Any]:
+        """The K-1 non-executed chunks, in one forward pass where possible.
+
+        Unbatched, each extra costs a full flow-matching integration: measured at
+        328 ms against 337 ms for the executed chunk, which put a K=4 corpus at
+        32.7 h against a ~20 h budget (docs/throughput.md). Batching them shares
+        the VLM prefix pass and the ten denoise steps across the batch dimension.
+
+        Falls back to the sequential loop on CUDA OOM. Batch 3 of a 500M VLM with
+        two images is not obviously safe on an 8 GB card, and a shard that dies at
+        hour four is a worse outcome than one that runs slowly.
+        """
+        if not self.batch_samples or episode_seed is None or step is None:
+            # Without a seed there is no per-index noise to assemble, so the
+            # batched path has nothing to build its batch out of.
+            return self._extra_samples_sequential(observation, k, episode_seed, step, predict)
+        try:
+            return self._extra_samples_batched(observation, k, episode_seed, step, predict)
+        except Exception as exc:
+            if not _is_oom(exc):
+                raise
+            if not self._oom_warned:
+                self._oom_warned = True
+                logger.warning(
+                    "Batched chunk sampling ran out of memory at K=%s (%s). Falling back to "
+                    "sequential sampling for the rest of this run, which is roughly %sx slower "
+                    "per step. Set policy.batch_samples=false to skip the retry.",
+                    k,
+                    type(exc).__name__,
+                    k - 1,
+                )
+            self.batch_samples = False
+            _empty_cuda_cache()
+            return self._extra_samples_sequential(observation, k, episode_seed, step, predict)
+
+    def _extra_samples_batched(
+        self,
+        observation: dict[str, Any],
+        k: int,
+        episode_seed: int,
+        step: int,
+        predict: Any,
+    ) -> list[Any]:
+        import torch  # noqa: PLC0415
+
+        n = k - 1
+        # Row i-1 is exactly `noise_for(index=i)`, so a batched sample carries the
+        # same noise its sequential counterpart would have. Sample 0 is absent by
+        # construction: it belongs to select_action, which is not on this path.
+        noise = torch.cat(
+            [
+                self.noise_for(episode_seed=episode_seed, step=step, index=index)
+                for index in range(1, k)
+            ],
+            dim=0,
+        )
+        chunks = _as_numpy(predict(_tile_batch(observation, n), noise=noise))
+        if chunks.ndim != 3 or chunks.shape[0] != n:
+            raise BatchedSamplingError(
+                f"Batched sampling asked for {n} chunks and got shape {chunks.shape}. "
+                "The observation did not tile along the batch dimension -- this path "
+                "assumes eval.batch_size=1, one environment per rollout."
+            )
+        return [_chunk_to_numpy(chunks[i], self.chunk_size, self.action_dim) for i in range(n)]
+
+    def _extra_samples_sequential(
+        self,
+        observation: dict[str, Any],
+        k: int,
+        episode_seed: int | None,
+        step: int | None,
+        predict: Any,
+    ) -> list[Any]:
+        samples = []
+        for index in range(1, k):
+            if episode_seed is None or step is None:
+                noise = None
+            else:
+                noise = self.noise_for(episode_seed=episode_seed, step=step, index=index)
+            chunk = predict(observation, noise=noise)
+            samples.append(_chunk_to_numpy(chunk, self.chunk_size, self.action_dim))
+        return samples
 
     @property
     def policy(self) -> Any:
@@ -153,13 +255,72 @@ def make_adapter(cfg: PolicyConfig, policy: Any | None = None) -> PolicyAdapter:
         )
     if policy is None:
         raise ValueError("SmolVLAAdapter requires a loaded LeRobot policy")
-    return SmolVLAAdapter(policy, n_action_steps=cfg.n_action_steps, num_steps=cfg.num_steps)
+    return SmolVLAAdapter(
+        policy,
+        n_action_steps=cfg.n_action_steps,
+        num_steps=cfg.num_steps,
+        batch_samples=cfg.batch_samples,
+    )
 
 
 def _np() -> Any:
     import numpy as np  # noqa: PLC0415
 
     return np
+
+
+def _tile_batch(observation: dict[str, Any], n: int) -> dict[str, Any]:
+    """Repeat a batch-of-one observation `n` times along the batch dimension.
+
+    Tiles every tensor whose leading dimension is 1 and every length-1 list (the
+    language strings), and passes anything else through untouched. The
+    alternative -- enumerating the keys SmolVLA reads -- silently drops whatever
+    a future preprocessor adds, and a missing key surfaces as a shape error deep
+    inside the VLM rather than here.
+
+    `repeat`, not `expand`: an expanded view shares storage and is not
+    contiguous, and the prefix embedding downstream reshapes. The copy is a few
+    MB of images against the activations of a 500M VLM.
+    """
+    import torch  # noqa: PLC0415
+
+    tiled: dict[str, Any] = {}
+    for key, value in observation.items():
+        if isinstance(value, torch.Tensor) and value.ndim >= 1 and value.shape[0] == 1:
+            tiled[key] = value.repeat(n, *([1] * (value.ndim - 1)))
+        elif isinstance(value, list) and len(value) == 1:
+            tiled[key] = value * n
+        else:
+            tiled[key] = value
+    return tiled
+
+
+def _is_oom(exc: BaseException) -> bool:
+    """True only for out-of-memory, never for a contract violation.
+
+    Matching on `RuntimeError` alone would make the OOM fallback swallow
+    `BatchedSamplingError` -- a wrong-shaped batch would then quietly record
+    sequentially-sampled chunks forever instead of failing.
+    """
+    try:
+        import torch  # noqa: PLC0415
+
+        torch_oom = getattr(torch, "OutOfMemoryError", None)
+        if torch_oom is not None and isinstance(exc, torch_oom):
+            return True
+    except ImportError:
+        pass
+    return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+
+
+def _empty_cuda_cache() -> None:
+    try:
+        import torch  # noqa: PLC0415
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
 
 
 def _copy_queues(queues: Any) -> Any:

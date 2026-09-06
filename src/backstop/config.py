@@ -16,6 +16,11 @@ class PolicyConfig(BaseModel):
     device: str = "cuda"
     n_action_steps: int = 1
     num_steps: int = 1
+    # Draw the K-1 non-executed chunk samples in one batched forward pass instead
+    # of a loop. Never touches select_action, so the executed trajectory is
+    # unaffected either way. Off is the escape hatch for a memory-tight box; the
+    # adapter also falls back on its own if it hits OOM.
+    batch_samples: bool = True
 
 
 class EnvYamlConfig(BaseModel):
