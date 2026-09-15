@@ -6,32 +6,230 @@ todos:
     content: "DONE. Week-1 corpus copied read-only to data/lerobot/week1_clean_k1_REFERENCE (229 MB, verified byte-identical via diff -r) and its 100 per-episode outcomes frozen into git-tracked docs/week1_reference.csv (sha256 c1067060..., 70 successes, per-task 8,8,8,4,8,7,8,6,9,4, all 30 failures at step 280). The 70/100 gate now compares against a file, not a memory."
     status: completed
   - id: throughput
-    content: "MEASURED, batching still to do. Per-stage numbers in docs/throughput.md (`just benchmark`). The step is policy-bound, not render-bound: at K=1 the forward pass is 56% and OSMesa render 29%, so sampling is the lever. K=1 0.775 s/step, K=4 unbatched 1.594 s/step (2.06x); the three extra samples cost 328 ms each against 337 ms for the executed one. Projected 400-episode corpus 32.7 h against a ~20 h budget, so the gate fires: batching is required. Also found: env_reset 6.8 s/episode (hard_reset rebuilds model + renderer) and save_episode 4.9 s/episode, ~1.3 h across the corpus and independent of K. Episode length is 158.8 steps at week-1's 70%, not the 210 assumed here. Remaining: batch the K-1 extras into one forward pass, leaving select_action on the unbatched index-0 path, then re-run the gate."
-    status: pending
+    content: "MEASURED AND BATCHED. Per-stage numbers in docs/throughput.md (`just benchmark`). The step is policy-bound, not render-bound: at K=1 the forward pass is 56% and OSMesa render 29%, so sampling is the lever. K=1 0.775 s/step, K=4 unbatched 1.594 s/step (2.06x); the three extra samples cost 328 ms each against 337 ms for the executed one. Batched K-1 sampling landed in policy/adapter.py, checked against the real policy (not just fakes): batched vs sequential diverges up to 0.64 relative on individual chunk values (batch-size-dependent GEMM kernels), but the chunk *spread* -- the actual guard signal -- agrees to 0.4%, and select_action never touches the batched path so the executed trajectory is unaffected. OOM falls back to sequential automatically. Also found: env_reset 6.8 s/episode (hard_reset rebuilds model + renderer) and save_episode 4.9 s/episode, ~1.3 h across the corpus and independent of K. Episode length is 158.8 steps at week-1's 70%, not the 210 assumed here. Remaining: re-run the corpus-size projection with the batched number now that it exists."
+    status: completed
   - id: shard-safety
-    content: "Recording safety: shard datasets per perturbation family, stop create_dataset from rmtree-ing an existing root, resume from a partial shard, and move verify_corpus invariants into a per-episode in-loop assertion."
-    status: pending
+    content: "DONE. config.py record.on_existing (fail/resume/overwrite) replaces the unconditional rmtree; record.shard field; LeRobotDataset.resume() skips already-recorded episodes. Covered by tests/unit/test_record_safety.py (264 lines). verify_corpus.py remains the post-run gate; it has not yet been made an in-loop per-episode assertion, so a bad shard is still caught after the fact, not during recording."
+    status: completed
   - id: clean-rerecord
-    content: "Re-record the clean 100 episodes at K=4 with privileged state. Hard gate: must reproduce 70/100 episode-for-episode. If it does not, the week-1 seeding contract is broken and everything downstream stops."
-    status: pending
+    content: "DONE. Ran overnight (2026-09-10 01:00-05:41, no crashes), configs/record/spatial_clean_k4.yaml. success_rate=0.700 (70/100), matching week 1's aggregate. THE GATE: compared all 100 episodes against docs/week1_reference.csv on (task_id, seed, success, n_steps) -- 100/100 match exactly, including n_steps, not just pass/fail. scripts/verify_corpus.py: 20/20 checks passed, K samples now genuinely spread (max spread=2.112, was 0 at week-1's K=1), action==action_policy holds for the clean shard (ADR-003). The batched K=4 sampling does not perturb the executed trajectory -- seeding contract holds, paired clean/perturbed design for corpus A is sound. Full log in artifacts/logs/overnight_session_notes.md."
+    status: completed
   - id: adr-003
-    content: "ADR-003: action_policy vs action split, privileged sim state as an out-of-dataset sidecar with a stated prohibition on guard use, label sidecar format, K=4 as the corpus standard. Update schema.py and verify_corpus.py together."
-    status: pending
+    content: "DONE. docs/adr/003-perturbation-schema.md written. action_policy field landed in schema.py + lerobot_features; record/loop.py now actually calls perturbation.perturb_action() and backstop.perturb.attach() (previously built but unwired -- config.py gained record.perturbation/perturbation_strength/perturbation_kwargs to select a family per run); verify_corpus.py checks action_policy==action_chunk[0] unconditionally and action==action_policy iff not action_noise, with a fallback path for pre-ADR-003 datasets with no action_policy column. Covered end-to-end in tests/unit/test_rollout_loop.py against fakes, and confirmed for real: a live 1-episode recording with action_noise at strength 1.0 (real simulator, real policy) passed 18/19 verify_corpus.py checks -- action_policy==action_chunk[0] held and action correctly differed from action_policy, i.e. the perturbation actually reached the executed action, not just the label. (The 19th check, 'at least one episode ended before the step cap', is a single-episode sample-size artifact, not a real failure -- week 1 already established every natural failure hits the 280-step cap.) Label sidecar format (labels.jsonl) is decided in the ADR but not yet built -- that's the review-tool/taxonomy work later in the week."
+    status: completed
   - id: sim-state
-    content: "Capture the full flattened MuJoCo state every step via env.get_sim_state() (92 float64, ~206 KB/episode), not a curated pose dict. Assert round-trip restore through regenerate_obs_from_state in a contract test. Not retrofittable; see docs/recovery.md."
-    status: pending
+    content: "DONE. Capture via PrivilegedWriter + env.get_sim_state() (92 float64, ~206 KB/episode), measured at 0.08ms/step (free). Round-trip restore through regenerate_obs_from_state verified in scripts/verify_sim_state_roundtrip.py (`just verify-sim-roundtrip`), against the real simulator, not a fake -- passes to float noise (~1e-6) under smooth motion. Caveat found and written up in docs/recovery.md: branching mid-chatter (rapid gripper toggling, large uncorrelated joint jumps) shows real transient divergence for a few steps, traced to qacc_warmstart not being part of robosuite's flattened state. Does not block the clean re-record; does matter for recovery experiments that branch near a grasp attempt."
+    status: completed
   - id: perturb-module
-    content: "src/backstop/perturb/: lighting, camera, action noise (robosuite modders + loop hook), then layout (object pose jitter with validity check) and language (absent-object and paraphrase). CPU contract tests for each."
-    status: pending
+    content: |
+      DONE. src/backstop/perturb/: lighting, camera, object_pose (layout jitter,
+      reject-and-resample validity check -- table bounds, resting velocity,
+      MuJoCo contact penetration, capped at 5 attempts, counted, verified
+      against the real simulator), action_noise, distractor (real BDDL/MuJoCo
+      surgery, not the DynamicsModder fallback -- see `distractor-spike`), and
+      both language sub-modes (`absent_target`, `language_paraphrase`,
+      `task_description` override wired through `PerturbedEnv.reset()`) --
+      all six families implemented, registered in `FAMILIES`, and wired end to
+      end. ADR-003 landed record/loop.py's actual calls to
+      `perturbation.perturb_action()` and `backstop.perturb.attach()` plus
+      config.py's `record.perturbation`/`perturbation_strength`/
+      `perturbation_kwargs`, so any family is selectable for a real run --
+      exercised by the calibration sweep (72 cells across five families) and by
+      five real corpus-A shards recorded and verified at K=4.
+
+      `absent_target`/`language_paraphrase` confirmed against the real simulator
+      with the exact kwargs corpus A now records with (`replacement`/
+      `paraphrase` strings, checked via `PerturbedEnv.task_description`), not
+      just the fakes in test_perturb.py. One discovery worth recording: every
+      one of libero_spatial's 10 tasks shares the identical object roster
+      (checked directly against all 10 bddl files) -- so `absent_target`'s
+      "swap in a noun from a different task in the suite" had to borrow from
+      LIBERO's broader benchmark instead (`moka pot`, from libero_90), since
+      libero_spatial itself has no internal object diversity to swap from.
+    status: completed
   - id: calibration
-    content: "Strength sweep at K=1 on 3 tasks spanning difficulty (8 easy, 0 mid, 3 hard), 5 episodes x 3 strengths x 5 families. Pick the strength whose success rate lands in 30-70%. Publish the table."
-    status: pending
+    content: |
+      DONE, including the lighting fix and a fourth pass added once `distractor` was built
+      (see `distractor-spike`). scripts/calibration_sweep.py, 4 passes: 36 cells at strengths
+      [0.3, 0.6, 1.0] (the 4 continuous-strength families that existed at the time --
+      language is categorical, distractor not yet built); an 18-cell refinement at
+      [0.1, 0.15, 0.2] for object_pose and action_noise once the first pass showed their
+      whole tested range was too aggressive; a 9-cell lighting-only retest after fixing a
+      real bug the first pass surfaced (see families.py Lighting docstring and below); a
+      9-cell `distractor` pass at the original [0.3, 0.6, 1.0] strengths once the family
+      landed. 72 cells run across all four passes, 63 live in
+      artifacts/calibration/sweep_results.csv (9 pre-fix lighting cells superseded and
+      backed up separately, see below), ~340 episodes, K=1, eval-only, zero crashes across
+      all four passes (~14h wall clock combined). Baselines: task 8 = 90%, task 0 = 80%,
+      task 3 = 40%, pooled = 70%.
+
+      Lighting bug: the first pass found `lighting` flat at 60-67% across its *entire*
+      tested range including strength 1.0 (the ceiling) -- not a calibration problem, a
+      real one. Diagnosed against the real simulator (mean agentview pixel value, not
+      guessed): dimming the two named scene lights to 20% only moved mean brightness
+      120 -> 87, because MuJoCo's camera headlight (`model.vis.headlight`) is a separate,
+      always-on light source `LightingModder` does not touch. Scaling the headlight the
+      same way took it to 11 and produced a real gradient. Fixed in `Lighting.on_reset`;
+      old lighting rows in artifacts/calibration/sweep_results.csv backed up
+      (.bak_pre_lighting_fix) and re-run at the same three strengths.
+
+      | family        | 0.10 | 0.15 | 0.20 | 0.30 | 0.60 | 1.00 |
+      |---------------|------|------|------|------|------|------|
+      | lighting      |  -   |  -   |  -   | 73%  | 60%  | 47%  |
+      | camera        |  -   |  -   |  -   | 60%  | 33%  | 27%  |
+      | object_pose   | 60%  | 53%  | 53%  | 33%  | 13%  | 7%   |
+      | action_noise  | 60%  | 53%  | 40%  | 33%  | 7%   | 0%   |
+      | distractor    |  -   |  -   |  -   | 67%  | 67%  | 53%  |
+
+      `distractor` needed no refinement pass -- all three tested strengths already land in
+      the 30-70% band. Flagged, not smoothed over: 0.30 and 0.60 gave *identical* per-task
+      results (task 0/3/8 each 3/5, 3/5, 4/5 both times), the same "flat across a strength
+      range" shape that exposed the lighting bug -- plausibly n=5 coincidence rather than a
+      second bug, since 1.00 does differ from both, but worth a second look before fully
+      trusting the gradient.
+
+      Chosen strengths for corpus A: lighting 0.6 (pooled 60%, headlight fix applied),
+      camera 0.6 (pooled 33%, real monotonic gradient), object_pose 0.15 (pooled 53%,
+      balanced 40/40/80 across task 0/3/8), action_noise 0.15 (pooled 53%, same 40/40/80
+      spread), distractor 1.0 (pooled 53%, most balanced of the three tested strengths at
+      40/60/60 -- 0.3 and 0.6 both pooled 67% with task 8 running hot at 80%). All five
+      families now have a defensible strength; nothing blocking corpus A on this front.
+    status: completed
   - id: distractor-spike
-    content: "Timeboxed one-day spike on distractor-object injection via BDDL/MuJoCo model editing. If it does not land, substitute DynamicsModder (friction/mass) and state the perceptual-distractor gap as a limitation."
-    status: pending
+    content: |
+      DONE, and it landed the real distractor-object route, not the DynamicsModder
+      fallback this todo pre-approved. `Distractor` lives in
+      src/backstop/perturb/families.py alongside every other family, registered in
+      perturb/__init__.py's FAMILIES the same way, selected via
+      `make_perturbation("distractor", strength)` -- not a separate module. The one
+      structural addition is a new `prepare_env` hook on `PerturbedEnv`
+      (wrapper.py), because `distractor` is the only family that has to act
+      *before* the env's first reset (BDDL edit, so MuJoCo compiles a different
+      model) rather than after it like every other family's `on_reset`; the hook
+      is opt-in via `getattr` and a no-op for every other family.
+
+      Mechanism: all 10 libero_spatial task BDDL files share one byte-identical
+      `:regions`/`:objects` block, so one fixed distractor object (`milk_1`) and
+      region (`(0.30, -0.25, 0.36, -0.19)`, main_table-relative) generalizes
+      across the suite -- checked clear of every declared region with margin, not
+      assumed. Injected via paren-depth text splicing, not fixed-offset
+      replacement, so it survives whitespace differences between task files.
+
+      The pairing problem this todo was named "high risk" over: a `.pruned_init`
+      row is a flattened `time+qpos+qvel` state sized for the original model (92
+      floats for libero_spatial); adding a free-jointed object changes that to
+      105. Solved by building the augmented model once at attach time to read
+      back where MuJoCo actually placed the new joint's qpos/qvel addresses, then
+      splicing every row of the original init-state array at that address, with a
+      per-episode xy/yaw jitter seeded through the existing `episode_rng`
+      convention. Falls back to an explicit unpaired mode (`params()["paired"] =
+      False`) only if `init_states=False`, which is not the recording default.
+
+      Verified against the real simulator, independently of the implementing
+      agent's own report: reset a clean episode and a distractor episode at the
+      same episode index, stripped the distractor's 7 qpos values out of the
+      perturbed model's qpos vector, and diffed against the clean model directly
+      -- max abs difference 9e-18 (float noise) for the robot arm and every
+      pre-existing object. 146 unit tests pass (CPU-fakeable contract tests in
+      test_perturb.py + test_perturb_wrapper.py), ruff/pyright clean.
+
+      Named limitation, in the class's own docstring: strength currently scales
+      placement *variety* within one fixed off-workspace region, not
+      proximity/salience to the workspace -- a closer, verified-collision-free
+      anchor point was out of scope for the timebox. Calibration should read
+      `distractor` strength as "placement spread," not "distraction intensity."
+
+      Not done, and not this todo's scope: no
+      configs/record/spatial_distractor_k4.yaml yet -- `distractor` still needs
+      its own 3-task x 3-strength calibration pass (same as the other four
+      families) before it can record a real corpus-A shard.
+    status: completed
   - id: corpus-a
-    content: "Record corpus A: clean arm + 5 families x 50 + absent-object slice + paraphrase control, sharded, every shard verified. ~16 h across overnight runs."
-    status: pending
+    content: |
+      DONE. All 400/400 episodes recorded and verified. Original scope: clean
+      arm + 5 families x 50 + absent-object slice + paraphrase control,
+      sharded, every shard verified.
+
+      The clean arm (100 episodes, K=4, see `clean-rerecord`), all four
+      continuous-strength families recorded overnight 2026-09-11 00:01-08:51
+      (~8h50m) via scripts/record_corpus_a_continuous_families.sh -- lighting
+      70.0%, camera 58.0%, object_pose 56.0%, action_noise 66.0%, all
+      `verify_corpus.py` 20/20 and inside [0.30, 0.70] -- and `distractor`:
+      9-cell calibration pass (tasks 8/0/3 x strengths [0.3, 0.6, 1.0], pooled
+      66.7%/66.7%/53.3%, see `calibration`) picked strength 1.0, recorded
+      13:42-15:40 the same day, 50/50 episodes, success_rate=0.660,
+      `in_tolerance=True`, `verify_corpus.py` 20/20. Zero crashes, zero
+      out-of-tolerance shards across these five families.
+
+      `language_absent` (30 episodes, quarantined, 0% by construction):
+      recorded 2026-09-11 18:48, `verify_corpus.py` 19/20 (the one expected
+      "failure" is that every episode hits the step cap, which is the point of
+      this arm).
+
+      `language_paraphrase` (20 episodes, control arm on task 0 only, since
+      `record/loop.py` takes one `Perturbation` instance per run): took two
+      attempts, and the result is a real finding, not a data-pipeline defect.
+
+      First attempt (2026-09-11 19:12-19:48) reached only 10/20 episodes before
+      the laptop was powered off mid-run (`journalctl`: `systemd-logind`
+      "system will power off now" at 19:49:13, ~27s after episode 10 finished)
+      -- the parquet file was left without its footer (valid `PAR1` header,
+      no trailing magic, exactly what a writer killed before `close()` leaves
+      behind), not corrupted by anything in the recording code. All 10
+      completed episodes had already failed (0/10), which at the time looked
+      alarming enough to investigate before just resuming.
+
+      Investigation ruled out a pipeline bug: the initial frame of paraphrase
+      episode 0 is pixel-identical to clean-arm episode 0 (same task 0, same
+      seed 0), confirming the seeding/pairing held; the code path
+      (`PerturbedEnv.reset()` in wrapper.py overriding `task_description`,
+      re-read into `observation["task"]` every step in `record/loop.py`)
+      correctly delivers the reworded instruction to the policy for the whole
+      episode, not just at reset. Watching 5 of the 10 recorded videos showed
+      the same behavior every time: the arm engages the correct bowl but never
+      completes the transport-and-place step before the 280-step cap -- the
+      same "stalls and runs out the clock" signature week 1 found in natural
+      failures, just happening far more often.
+
+      Second attempt (2026-09-15, fresh re-record, same wording, same
+      task_ids/seeds, prior incomplete shard moved aside rather than deleted)
+      completed cleanly: 20/20 episodes, `success_rate=0.150` (3/20, at episode
+      indices 15/17/19), `in_tolerance=False` against the configured [0.55,
+      1.0] band, `verify_corpus.py` 20/20, all 20 privileged sidecars present.
+      This reproduces the first attempt's rate almost exactly (0/10 vs. this
+      run's first 10) and rules out "unlucky truncated sample" -- two
+      independent recordings of the same wording both collapse task 0's clean
+      80% baseline, landing at 15% pooled.
+
+      **Finding that changes the plan's own assumption:** `language_paraphrase`
+      was designed as a control that "must not move the outcome" (see
+      `language has two sub-modes` below) -- a benign reword that preserves the
+      spatial disambiguator (task 0's "between the plate and the ramekin")
+      should leave success near the 80% clean baseline. It does not. SmolVLA
+      here appears to be reading something much closer to the exact training
+      phrasing than the semantic content, which is itself a real language-
+      robustness result worth reporting in the taxonomy, not a bug to fix
+      before recording. It does mean this arm can no longer be read as a
+      neutral control in week 3/4 analysis -- it has to be reported as its own
+      (surprisingly destructive) perturbation, alongside a note that the
+      "detect perturbation vs. detect impending failure" concern this control
+      was meant to rule out is now unresolved for the language family.
+
+      Also found in passing: `record/cli.py`'s exit code (2, whenever the
+      final rate lands outside `cfg.tolerance`'s band) fires regardless of
+      `cfg.tolerance.enforce`, which every other shard's own convention
+      ("`enforce: false` ... record and report `in_tolerance=False` rather
+      than abort") describes as governing this. Every other shard this week
+      happened to land in-tolerance, so this is the first time the exit path
+      was exercised -- it silently broke the `&&`-chained `verify_corpus.py`
+      step, which had to be run manually afterward (and passed 20/20 once
+      run). Not a defect in the recorded data, but worth knowing before
+      scripting future out-of-tolerance-prone shards the same way.
+
+      Corpus A total: 100 (clean) + 50x5 (lighting/camera/object_pose/
+      action_noise/distractor) + 30 (language_absent) + 20
+      (language_paraphrase) = 400/400 episodes recorded and verified.
+    status: completed
   - id: libero-plus
     content: "Timeboxed half-day spike: install the LIBERO-plus fork, check it against MuJoCo 3.3.2 and this lerobot, record a 60-80 episode external-validity slice (corpus B). Hard abort to week 6 if it is not recording by the end of the timebox."
     status: pending
@@ -186,10 +384,21 @@ that the check is annoying.
 **`language` has two sub-modes and both matter.**
 - *absent object* — swap in a target noun from a different task in the suite, so the named
   object is not in the scene. This is the visual-precondition signal's target case.
-- *paraphrase* — a benign rewording that should **not** change the outcome.
+- *paraphrase* — designed as a benign rewording that should **not** change the outcome.
 
-The paraphrase arm is the control that shows a guard is not simply detecting "the
-instruction looks unusual". Without it, a language-sensitive guard is uninterpretable.
+The paraphrase arm was meant to be the control that shows a guard is not simply detecting
+"the instruction looks unusual". Without it, a language-sensitive guard is uninterpretable.
+
+**This assumption did not survive contact with the recording.** `language_paraphrase` was
+recorded twice (see `corpus-a`) and both times collapsed task 0's 80% clean baseline —
+final pooled result 15% (3/20), reproduced across two independent runs, despite the
+paraphrase keeping the exact spatial disambiguator the original instruction used. SmolVLA
+appears to be reading something much closer to the exact training-set phrasing than the
+semantic content. That is a real language-robustness finding for the taxonomy, not grounds
+to discard the arm — but it means this shard has to be reported as its own (surprisingly
+destructive) perturbation in week 3/4, not treated as a neutral control, and the "guard
+detects perturbation vs. detects impending failure" risk this arm was meant to rule out is
+still open for the language family.
 
 **`distractor` is the honest weak point.** Adding an object to a LIBERO scene means editing
 the BDDL problem and recompiling the MuJoCo model — real surgery, and the brief names it
