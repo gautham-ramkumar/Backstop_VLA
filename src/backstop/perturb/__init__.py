@@ -13,24 +13,48 @@ from __future__ import annotations
 from typing import Any
 
 from backstop.perturb.base import NoPerturbation, Perturbation, episode_rng
-from backstop.perturb.families import AbsentTarget, ActionNoise, Lighting, ObjectPose
+from backstop.perturb.families import (
+    AbsentTarget,
+    ActionNoise,
+    Camera,
+    Distractor,
+    Lighting,
+    ObjectPose,
+    Paraphrase,
+)
 from backstop.perturb.wrapper import PerturbedEnv, attach
 
 FAMILIES: dict[str, Any] = {
     NoPerturbation.name: NoPerturbation,
     Lighting.name: Lighting,
+    Camera.name: Camera,
     ObjectPose.name: ObjectPose,
     ActionNoise.name: ActionNoise,
+    Distractor.name: Distractor,
     AbsentTarget.name: AbsentTarget,
+    Paraphrase.name: Paraphrase,
+}
+
+# Families whose constructor takes a supplied value (the text to swap in) rather
+# than a sampled `strength`. Both are categorical: there is nothing for a knob to
+# scale, so treating them like the numeric families would need a fake strength
+# that means nothing.
+_CATEGORICAL: dict[str, Any] = {
+    NoPerturbation.name: NoPerturbation,
+    AbsentTarget.name: AbsentTarget,
+    Paraphrase.name: Paraphrase,
 }
 
 __all__ = [
     "FAMILIES",
     "AbsentTarget",
     "ActionNoise",
+    "Camera",
+    "Distractor",
     "Lighting",
     "NoPerturbation",
     "ObjectPose",
+    "Paraphrase",
     "PerturbedEnv",
     "Perturbation",
     "attach",
@@ -52,6 +76,6 @@ def make_perturbation(name: str, strength: float = 0.0, **kwargs: Any) -> Pertur
     family = FAMILIES[name]
     if family is NoPerturbation:
         return NoPerturbation()
-    if family is AbsentTarget:
-        return AbsentTarget(**kwargs)
+    if name in _CATEGORICAL:
+        return family(**kwargs)
     return family(strength, **kwargs)

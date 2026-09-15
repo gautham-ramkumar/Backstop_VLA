@@ -12,6 +12,7 @@ import numpy as np
 
 from backstop.config import PipelineConfig
 from backstop.env.libero import instrument_render, sim_state
+from backstop.perturb import Perturbation, attach, episode_rng, make_perturbation
 from backstop.policy.adapter import SmolVLAAdapter
 from backstop.record.privileged import PrivilegedWriter
 from backstop.record.timing import StageTimer
@@ -179,6 +180,9 @@ def run_episodes(
         if cfg.record.enabled and cfg.record.privileged
         else None
     )
+    perturbation = make_perturbation(
+        cfg.record.perturbation, cfg.record.perturbation_strength, **cfg.record.perturbation_kwargs
+    )
 
     for suite_name, task_map in envs.items():
         for task_id, vec_env in sorted(task_map.items()):
@@ -200,6 +204,7 @@ def run_episodes(
                     cfg=cfg,
                     dataset=dataset,
                     privileged=privileged,
+                    perturbation=perturbation,
                     timer=timer,
                     episode_index=episode_index,
                     seed=seed,
@@ -264,6 +269,7 @@ def _rollout_one(
     cfg: PipelineConfig,
     dataset: Any | None,
     privileged: PrivilegedWriter | None,
+    perturbation: Perturbation,
     timer: StageTimer,
     episode_index: int,
     seed: int,
@@ -272,6 +278,12 @@ def _rollout_one(
 ) -> tuple[bool, int]:
     """Returns (success, n_steps). Episode length separates timeouts from early ends."""
     adapter.reset()
+    # Only wrap when the family actually needs reset-time hooking: `attach`
+    # requires in-process sub-envs (`vec_env.envs`), which a family that only
+    # implements `perturb_action` (applied below, not through the wrapper) has no
+    # reason to force on every vec_env.
+    if getattr(perturbation, "needs_env_hook", True):
+        attach(vec_env, perturbation, episode_seed=seed)
     with timer("env_reset"):
         observation, _info = vec_env.reset(seed=[seed], options={new_rollout_option: True})
     # After the reset, not before: `hard_reset` rebuilds the simulator, discarding
@@ -289,6 +301,10 @@ def _rollout_one(
     success = False
     step = 0
     k = cfg.record.k_samples
+    # One generator per episode, advanced once per step -- not one per call, which
+    # would draw the same noise every step and not one shared with `on_reset`'s
+    # generator, which is a separate stream (see backstop.perturb.base.episode_rng).
+    perturb_rng = episode_rng(seed, perturbation.name)
     import torch  # noqa: PLC0415
 
     while not bool(done[0]) and step < max_steps:
@@ -333,6 +349,12 @@ def _rollout_one(
                 stepped = stepped.reshape(1, -1)
             chunk = _unnormalize_array(post, chunk)
             samples = _unnormalize_array(post, samples)
+            # `action_policy` before, `action` after: the only family that differs
+            # is `action_noise` (ADR-003). Every other family's `perturb_action` is
+            # an identity, so `action == action_policy` for them by construction,
+            # not by a special case here.
+            policy_action = stepped
+            stepped = perturbation.perturb_action(stepped, perturb_rng)
 
         with timer("env_step"):
             observation, _reward, terminated, truncated, info = vec_env.step(stepped)
@@ -346,6 +368,7 @@ def _rollout_one(
                 frame = _build_frame(
                     frame_obs=frame_obs,
                     action=stepped[0],
+                    action_policy=policy_action[0],
                     chunk=chunk,
                     samples=samples,
                     success=bool(success and done[0]),
@@ -384,6 +407,7 @@ def _build_frame(
     *,
     frame_obs: dict[str, np.ndarray],
     action: np.ndarray,
+    action_policy: np.ndarray,
     chunk: np.ndarray,
     samples: np.ndarray,
     success: bool,
@@ -395,6 +419,7 @@ def _build_frame(
         "observation.images.image2": frame_obs["image2"],
         "observation.state": frame_obs["state"],
         "action": np.asarray(action, dtype=np.float32).reshape(ACTION_DIM),
+        "action_policy": np.asarray(action_policy, dtype=np.float32).reshape(ACTION_DIM),
         "action_chunk": np.asarray(chunk, dtype=np.float32).reshape(CHUNK_SIZE, ACTION_DIM),
         "action_chunk_samples": np.asarray(samples, dtype=np.float32).reshape(
             k, CHUNK_SIZE, ACTION_DIM

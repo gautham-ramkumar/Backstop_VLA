@@ -68,6 +68,12 @@ class RunProvenance(BaseModel):
     output_dir: str
     in_tolerance: bool | None = None
     notes: str | None = None
+    # ADR-003: which perturbation family this shard was recorded under. "clean"
+    # (the default) means `action_policy` and `action` are identical by
+    # construction; `verify_corpus.py` reads this to know which invariant applies.
+    shard: str | None = None
+    perturbation: str = "clean"
+    perturbation_strength: float = 0.0
 
 
 class MetricContract(BaseModel):
@@ -113,7 +119,11 @@ def lerobot_features(k_samples: int, image_hw: tuple[int, int] = (360, 360)) -> 
         "observation.images.image": dict(image),
         "observation.images.image2": dict(image),
         "observation.state": {"dtype": "float32", "shape": (STATE_DIM,), "names": None},
+        # ADR-003: `action` is what was actually executed; `action_policy` is what
+        # the policy asked for, before `action_noise` (the only family that touches
+        # this) perturbs it. Equal for every other family, including "clean".
         "action": {"dtype": "float32", "shape": (ACTION_DIM,), "names": None},
+        "action_policy": {"dtype": "float32", "shape": (ACTION_DIM,), "names": None},
         "action_chunk": {"dtype": "float32", "shape": (CHUNK_SIZE, ACTION_DIM), "names": None},
         "action_chunk_samples": {
             "dtype": "float32",

@@ -1,0 +1,44 @@
+# Resume variant of spatial_clean_k4.yaml, kept ready in case the overnight run
+# needs restarting: identical except `on_existing: resume`, which appends to the
+# existing shard and skips episodes already recorded rather than refusing to
+# touch a populated root. Do not use this as the first-run config -- `fail` in
+# spatial_clean_k4.yaml is what protects the shard from a second cold start
+# silently overwriting it.
+seed: 0
+output_dir: artifacts/eval/spatial_clean_k4
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 10
+env:
+  type: libero
+  task: libero_spatial
+  task_ids: null
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 10
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 4
+  repo_id: local/backstop_spatial_clean_k4
+  root: data/lerobot/backstop_spatial_clean_k4
+  on_existing: resume
+  shard: clean
+  privileged: true
+  privileged_root: data/privileged
+wandb:
+  project: backstop
+  enabled: true
+  mode: offline
+tolerance:
+  min_success_rate: 0.70
+  max_success_rate: 0.90
+  fallback_num_steps: 1
+  enforce: true

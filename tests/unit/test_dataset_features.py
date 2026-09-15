@@ -12,12 +12,14 @@ def test_dataset_features_include_chunk_and_samples() -> None:
         "observation.images.image2",
         "observation.state",
         "action",
+        "action_policy",
         "action_chunk",
         "action_chunk_samples",
         "next.success",
     }
     assert features["observation.state"]["shape"] == (STATE_DIM,)
     assert features["action"]["shape"] == (ACTION_DIM,)
+    assert features["action_policy"]["shape"] == (ACTION_DIM,)
     assert features["action_chunk"]["shape"] == (CHUNK_SIZE, ACTION_DIM)
     assert features["action_chunk_samples"]["shape"] == (4, CHUNK_SIZE, ACTION_DIM)
     assert features["observation.images.image"]["dtype"] == "video"

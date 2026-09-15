@@ -35,6 +35,17 @@ class PerturbedEnv(gym.Wrapper):
         super().__init__(env)
         self.perturbation = perturbation
         self.episode_seed = episode_seed
+        # A third, optional hook for the one family that cannot use `on_reset`:
+        # `distractor` edits the BDDL and recompiles the MuJoCo model, which has
+        # to happen *before* the wrapped env's first `reset()` ever builds it --
+        # `on_reset` already runs too late, after `self.env.reset()` below has
+        # called `LiberoEnv._ensure_env()`. `__init__` runs exactly once per
+        # sub-env (`attach()` only constructs a `PerturbedEnv` the first time),
+        # which is exactly the "before any reset" window this needs. Every other
+        # family omits `prepare_env`, so this is a no-op for them.
+        prepare_env = getattr(perturbation, "prepare_env", None)
+        if prepare_env is not None:
+            prepare_env(env.unwrapped)
 
     def set_episode_seed(self, episode_seed: int) -> None:
         """Vary the perturbation per episode. Same scene twice would make a shard
@@ -52,9 +63,24 @@ class PerturbedEnv(gym.Wrapper):
         rng = episode_rng(self.episode_seed, self.perturbation.name)
         changed = self.perturbation.on_reset(control_env, rng)
         observation = self._observe(inner, control_env, resettle=changed)
+        # `task_description` is a plain attribute on the LeRobot LiberoEnv (set once
+        # from the task suite, not recomputed per reset), not a method -- so this
+        # sets an instance attribute on the wrapper itself rather than calling
+        # through. `get_wrapper_attr` (what `vec_env.call("task_description")` uses)
+        # checks `hasattr(self, name)` on the outermost wrapper first, so this value
+        # is what the loop and the recorded frame both see; the language families
+        # are the only ones that define `task_description`, so every other family
+        # leaves the original untouched.
+        self.task_description = self._perturbed_task_description(
+            getattr(inner, "task_description")  # noqa: B009 -- duck-typed, like `_env` above
+        )
         info = dict(info)
         info["perturbation"] = self.perturbation.name
         return observation, info
+
+    def _perturbed_task_description(self, original: str) -> str:
+        override = getattr(self.perturbation, "task_description", None)
+        return original if override is None else override(original)
 
     def _observe(self, inner: Any, control_env: Any, *, resettle: bool) -> Any:
         """Rebuild the observation from the perturbed simulator.

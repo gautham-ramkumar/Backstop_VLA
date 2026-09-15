@@ -52,6 +52,13 @@ class RecordYamlConfig(BaseModel):
     # signal code cannot reach it. Off by default; every week-2 corpus config sets it.
     privileged: bool = False
     privileged_root: str = "data/privileged"
+    # Selects a backstop.perturb family by name ("clean" == no perturbation, the
+    # week-1 behaviour). `perturbation_kwargs` covers the categorical families
+    # (`absent_target`'s `replacement`, `language_paraphrase`'s `paraphrase`),
+    # which take a supplied value instead of a sampled strength.
+    perturbation: str = "clean"
+    perturbation_strength: float = Field(default=0.0, ge=0.0, le=1.0)
+    perturbation_kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
 class WandbYamlConfig(BaseModel):

@@ -1,0 +1,48 @@
+# Corpus A, object_pose (layout) shard: 50 episodes (5 per task x 10 tasks) at
+# K=4, strength 0.15 (calibrated -- the family's own [0,1] scale is misleading
+# here: even the lowest strength originally tested, 0.3, was already too
+# aggressive. 0.15 lands at pooled 53% across tasks 8/0/3, balanced 40/40/80).
+#
+# object_pose also carries a reject-and-resample validity check internally
+# (table bounds / resting velocity / contact penetration, capped at 5 attempts,
+# counted in each episode's params()) -- see families.py ObjectPose.
+seed: 0
+output_dir: artifacts/eval/spatial_object_pose_k4
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 10
+env:
+  type: libero
+  task: libero_spatial
+  task_ids: null
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 5
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 4
+  repo_id: local/backstop_spatial_object_pose_k4
+  root: data/lerobot/backstop_spatial_object_pose_k4
+  on_existing: fail
+  shard: object_pose
+  perturbation: object_pose
+  perturbation_strength: 0.15
+  privileged: true
+  privileged_root: data/privileged
+wandb:
+  project: backstop
+  enabled: true
+  mode: offline
+tolerance:
+  min_success_rate: 0.30
+  max_success_rate: 0.70
+  fallback_num_steps: 1
+  enforce: false

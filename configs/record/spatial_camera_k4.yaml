@@ -1,0 +1,43 @@
+# Corpus A, camera shard: 50 episodes (5 per task x 10 tasks) at K=4,
+# strength 0.6 (calibrated -- pooled 33% success across tasks 8/0/3, a real
+# monotonic gradient, in the 30-70% target band though closer to the floor).
+seed: 0
+output_dir: artifacts/eval/spatial_camera_k4
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 10
+env:
+  type: libero
+  task: libero_spatial
+  task_ids: null
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 5
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 4
+  repo_id: local/backstop_spatial_camera_k4
+  root: data/lerobot/backstop_spatial_camera_k4
+  on_existing: fail
+  shard: camera
+  perturbation: camera
+  perturbation_strength: 0.6
+  privileged: true
+  privileged_root: data/privileged
+wandb:
+  project: backstop
+  enabled: true
+  mode: offline
+tolerance:
+  min_success_rate: 0.20
+  max_success_rate: 0.60
+  fallback_num_steps: 1
+  enforce: false

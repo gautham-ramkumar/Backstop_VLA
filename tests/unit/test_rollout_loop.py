@@ -173,7 +173,14 @@ class CaptureDataset:
         self.finalized = True
 
 
-def _run(tmp_path, k_samples: int, *, n_episodes: int = 1, skip_episodes: int = 0):
+def _run(
+    tmp_path,
+    k_samples: int,
+    *,
+    n_episodes: int = 1,
+    skip_episodes: int = 0,
+    record_overrides: dict[str, Any] | None = None,
+):
     image = (np.arange(IMAGE_HW * IMAGE_HW * 3) % 251).reshape(IMAGE_HW, IMAGE_HW, 3)
     image = image.astype(np.uint8)
 
@@ -183,6 +190,12 @@ def _run(tmp_path, k_samples: int, *, n_episodes: int = 1, skip_episodes: int = 
     env_pre, _unused_env_post = LiberoEnv(task="libero_spatial").get_env_processors()
     dataset = CaptureDataset()
 
+    record: dict[str, Any] = {
+        "enabled": True,
+        "k_samples": k_samples,
+        "root": str(tmp_path / "ds"),
+    }
+    record.update(record_overrides or {})
     cfg = PipelineConfig.model_validate(
         {
             "seed": 0,
@@ -190,7 +203,7 @@ def _run(tmp_path, k_samples: int, *, n_episodes: int = 1, skip_episodes: int = 
             "policy": {"type": "smolvla", "path": "fake", "device": "cpu"},
             "env": {"type": "libero", "task": "libero_spatial", "task_ids": [0]},
             "eval": {"n_episodes": n_episodes, "batch_size": 1},
-            "record": {"enabled": True, "k_samples": k_samples, "root": str(tmp_path / "ds")},
+            "record": record,
         }
     )
 
@@ -254,6 +267,48 @@ def test_recorded_chunk_is_in_the_same_units_as_the_executed_action(rollout) -> 
     """Executed action must be row 0 of the stored chunk -- both post-unnormalize."""
     frame = rollout.frames[0]
     np.testing.assert_allclose(frame["action"], frame["action_chunk"][0], rtol=1e-5)
+
+
+def test_action_policy_matches_action_with_no_perturbation_configured(rollout) -> None:
+    """ADR-003: `record.perturbation` defaults to "clean", so `action_policy` (what
+    the policy asked for) and `action` (what was executed) must be identical here --
+    the divergence is `action_noise`-only, exercised in test_perturb.py, not here."""
+    frame = rollout.frames[0]
+    assert "action_policy" in frame
+    np.testing.assert_allclose(frame["action_policy"], frame["action"], rtol=1e-5)
+    np.testing.assert_allclose(frame["action_policy"], frame["action_chunk"][0], rtol=1e-5)
+
+
+def test_action_noise_is_actually_invoked_from_the_loop(tmp_path) -> None:
+    """The families' `perturb_action` is exercised against a bare rng in
+    test_perturb.py; this proves the loop actually calls it end to end -- through
+    `run_episodes`, not just unit-tested in isolation -- with a per-episode
+    generator that advances step to step rather than redrawing the same noise."""
+    result = _run(
+        tmp_path,
+        k_samples=1,
+        record_overrides={"perturbation": "action_noise", "perturbation_strength": 1.0},
+    )
+    frames = result.frames
+    assert len(frames) == DONE_AT
+
+    frame = frames[0]
+    assert not np.allclose(frame["action"], frame["action_policy"]), (
+        "action_noise at strength 1.0 produced no divergence -- perturb_action was never reached"
+    )
+    np.testing.assert_allclose(frame["action_policy"], frame["action_chunk"][0], rtol=1e-5)
+    # Gripper-untouched is exercised in test_perturb.py against a realistic
+    # LIBERO-scale ([-1, 1]) action; this fixture's SpyPostprocessor multiplies
+    # by POST_SCALE=10 to simulate unnormalize, so its fake gripper value lands
+    # outside [-1, 1] and the family's own clip (mirroring what the real LIBERO
+    # controller does to any out-of-range command) legitimately moves it. That
+    # is a fixture-scale artifact, not something to assert against here.
+
+    noise_0 = frames[0]["action"] - frames[0]["action_policy"]
+    noise_1 = frames[1]["action"] - frames[1]["action_policy"]
+    assert not np.allclose(noise_0, noise_1), (
+        "same noise every step -- perturb_rng was rebuilt instead of advanced"
+    )
 
 
 def test_observation_state_carries_eef_pos_and_gripper(rollout) -> None:

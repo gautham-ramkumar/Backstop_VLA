@@ -154,6 +154,25 @@ outside the LeRobot dataset, permitted for ground-truth labelling, onset annotat
 counterfactual branching — **forbidden as guard input**. Recovery may use it to *set up* an
 experiment; the guard may never read it at inference. See ADR-003.
 
+**Verified, with one caveat (`scripts/verify_sim_state_roundtrip.py`, `just
+verify-sim-roundtrip`).** Restoring the flattened state (time + qpos + qvel) and replaying the
+same actions reproduces the original continuation to float noise (~1e-6) under smooth motion —
+the case the recorded corpus actually contains. It does **not** hold under discontinuous
+actions (rapid gripper open/close chatter, large uncorrelated joint jumps): the same test with
+i.i.d.-noise actions showed real, decaying divergence for several steps after a restore before
+re-converging. Root cause: robosuite's flattened state
+(`MjSimState.flatten` in `robosuite/utils/binding_utils.py`) is time + qpos + qvel only — it
+excludes `qacc_warmstart`, so MuJoCo's contact solver starts a branch from a different warm
+start than the original run had whenever contacts are active. Ruled out by elimination first:
+this model's `sim.data.act` is empty (no actuator dynamics to miss), and forcing the OSC
+controller to re-sync (`controller.update(force=True)` + `reset_goal()`) after restore changed
+nothing, because `goal_pos` is recomputed fresh from current `ee_pos` on every `set_goal()`
+call rather than carried over. Practical effect: branching from a state reached by smooth
+policy motion (the corpus's actual content) is safe; branching mid-chatter (e.g. exactly at a
+gripper toggle) may show a few steps of transient divergence before the trajectory
+re-converges. Recovery experiments that branch near a grasp attempt should be aware of this and
+sanity-check a few branches by eye rather than assume bit-exact replay.
+
 ---
 
 ## The cheap pre-test (not a Week-2 todo)

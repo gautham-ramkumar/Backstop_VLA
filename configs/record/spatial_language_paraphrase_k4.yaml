@@ -1,0 +1,65 @@
+# Corpus A, language_paraphrase shard: 20 episodes on a single task (task_id 0)
+# at K=4. The control arm for language: must NOT move the success rate away
+# from that task's own clean baseline (80%, per the calibration table) -- see
+# Week2_plan.md's "language has two sub-modes" section.
+#
+# Single task by design, not an oversight: `record/loop.py` builds one
+# `Perturbation` instance per run (`make_perturbation` is called once) and
+# `attach()` shares that same instance across every sub-env, so one config can
+# only carry one fixed `paraphrase` string. Every libero_spatial task's
+# instruction disambiguates which of the *two* akita_black_bowl objects is the
+# target purely through the spatial clause ("between the plate and the
+# ramekin", "next to the cookie box", ...) -- checked directly against the
+# benchmark's own per-task language strings, not assumed. A single global
+# paraphrase broadcast across every task_id would preserve the wrong task's
+# spatial clause for the other nine, which is exactly the kind of change this
+# control arm must not make. Task 0's real instruction is "pick up the black
+# bowl between the plate and the ramekin and place it on the plate"; the
+# paraphrase below rewords the surface form while keeping that same
+# disambiguator. Broadening this control arm across multiple tasks would need
+# per-task kwargs support that doesn't exist yet -- out of scope here.
+seed: 0
+output_dir: artifacts/eval/spatial_language_paraphrase_k4
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 10
+env:
+  type: libero
+  task: libero_spatial
+  task_ids: [0]
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 20
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 4
+  repo_id: local/backstop_spatial_language_paraphrase_k4
+  root: data/lerobot/backstop_spatial_language_paraphrase_k4
+  on_existing: fail
+  shard: language_paraphrase
+  perturbation: language_paraphrase
+  perturbation_kwargs:
+    paraphrase: "Grab the black bowl positioned between the plate and the ramekin, then set it down on the plate."
+  privileged: true
+  privileged_root: data/privileged
+wandb:
+  project: backstop
+  enabled: true
+  mode: offline
+tolerance:
+  # Not the balanced families' [0.30, 0.70] band -- this is a control arm that
+  # must stay near task 0's own clean baseline (80%), not land at 50%. Banded
+  # loosely around that baseline given n=20's real sampling noise (~+/-18pp at
+  # 95% CI around 80%). enforce: false, per every other shard in this corpus.
+  min_success_rate: 0.55
+  max_success_rate: 1.0
+  fallback_num_steps: 1
+  enforce: false

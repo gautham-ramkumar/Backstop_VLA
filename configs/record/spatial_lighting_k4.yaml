@@ -1,0 +1,49 @@
+# Corpus A, lighting shard: 50 episodes (5 per task x 10 tasks) at K=4,
+# strength 0.6 (calibrated in Week2_plan.md's `calibration` entry -- pooled 60%
+# success across tasks 8/0/3, comfortably in the 30-70% target band).
+#
+# tolerance is intentionally NOT the clean 0.70-0.90 band: this shard is
+# designed to land around 50-60%, and backstop-record's CLI checks
+# min/max_success_rate unconditionally (no `enforce` gate, unlike
+# backstop-eval) -- leaving the clean band here would misreport a
+# working perturbation as "OUT OF TOLERANCE".
+seed: 0
+output_dir: artifacts/eval/spatial_lighting_k4
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 10
+env:
+  type: libero
+  task: libero_spatial
+  task_ids: null
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 5
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 4
+  repo_id: local/backstop_spatial_lighting_k4
+  root: data/lerobot/backstop_spatial_lighting_k4
+  on_existing: fail
+  shard: lighting
+  perturbation: lighting
+  perturbation_strength: 0.6
+  privileged: true
+  privileged_root: data/privileged
+wandb:
+  project: backstop
+  enabled: true
+  mode: offline
+tolerance:
+  min_success_rate: 0.30
+  max_success_rate: 0.70
+  fallback_num_steps: 1
+  enforce: false

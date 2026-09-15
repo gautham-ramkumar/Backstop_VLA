@@ -1,0 +1,65 @@
+# Corpus A, language_absent shard: 30 episodes (3 per task x 10 tasks) at K=4.
+# 0% success by construction -- quarantined out of the balanced arm and reported
+# separately, per Week2_plan.md's "why every family targets ~50%" section.
+#
+# The plan's own description says "swap in a target noun from a different task
+# in the suite" -- but every one of libero_spatial's 10 tasks shares the exact
+# same object roster (two akita_black_bowl, cookies, glazed_rim_porcelain_ramekin,
+# plate; checked directly against all 10 bddl files' `:objects` sections, they
+# are byte-identical). There is no "different task in the suite" with a
+# genuinely different object to borrow -- libero_spatial's only variation is
+# *where* the bowl starts, not *what* is on the table. So the replacement noun
+# below ("moka pot") comes from LIBERO's broader benchmark instead (a real
+# object category, used e.g. in libero_90's
+# KITCHEN_SCENE3_put_the_moka_pot_on_the_stove.bddl) rather than literally from
+# another libero_spatial task -- it is genuinely absent from every libero_spatial
+# scene, which is what the family needs; `AbsentTarget` only ever overrides the
+# instruction text, it never spawns an object, so no new asset download is
+# required. Because the replacement instruction never refers to anything
+# ambiguous (no bowl to disambiguate between), one fixed string is valid across
+# every task_id, unlike `language_paraphrase` below.
+seed: 0
+output_dir: artifacts/eval/spatial_language_absent_k4
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 10
+env:
+  type: libero
+  task: libero_spatial
+  task_ids: null
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 3
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 4
+  repo_id: local/backstop_spatial_language_absent_k4
+  root: data/lerobot/backstop_spatial_language_absent_k4
+  on_existing: fail
+  shard: language_absent
+  perturbation: absent_target
+  perturbation_kwargs:
+    replacement: "pick up the moka pot and place it on the plate"
+  privileged: true
+  privileged_root: data/privileged
+wandb:
+  project: backstop
+  enabled: true
+  mode: offline
+tolerance:
+  # Not the balanced families' [0.30, 0.70] band -- this family is expected to
+  # fail by construction (the named object never exists), so a small allowance
+  # above 0 is the informational check, not a 50% target. enforce: false either
+  # way, per every other shard in this corpus.
+  min_success_rate: 0.0
+  max_success_rate: 0.10
+  fallback_num_steps: 1
+  enforce: false

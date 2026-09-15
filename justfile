@@ -32,6 +32,9 @@ record-spatial:
 benchmark:
 	uv run python scripts/benchmark_throughput.py --k 1,4 --episodes 3
 
+verify-sim-roundtrip:
+	uv run python scripts/verify_sim_state_roundtrip.py
+
 verify-smoke:
 	uv run python scripts/verify_corpus.py \
 	  --artifacts artifacts/eval/spatial_smoke \

@@ -54,4 +54,7 @@ def build_provenance(
         batch_size=cfg.eval.batch_size,
         dataset_root=str(dataset_root) if dataset_root is not None else cfg.record.root,
         output_dir=str(output_dir),
+        shard=cfg.record.shard,
+        perturbation=cfg.record.perturbation,
+        perturbation_strength=cfg.record.perturbation_strength,
     )

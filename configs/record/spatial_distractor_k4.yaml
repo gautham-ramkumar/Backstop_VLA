@@ -1,0 +1,52 @@
+# Corpus A, distractor shard: 50 episodes (5 per task x 10 tasks) at K=4,
+# strength 1.0 (calibrated -- pooled 53% across tasks 8/0/3, balanced 40/60/60,
+# the most task-balanced of the three tested strengths and the closest to the
+# 50% target; 0.3 and 0.6 both pooled 67% with task 8 running hot at 80%).
+#
+# `distractor` is the real BDDL/MuJoCo-surgery family (see families.py's
+# Distractor docstring and Week2_plan.md's distractor-spike entry), not the
+# DynamicsModder fallback -- it edits the scene before compile via
+# PerturbedEnv's `prepare_env` hook, and splices every init-state row so the
+# added object doesn't break pairing with the clean corpus. Confirmed against
+# the real simulator: stripping the distractor's qpos out of a perturbed
+# episode reproduces the clean episode's robot/object state to float noise.
+seed: 0
+output_dir: artifacts/eval/spatial_distractor_k4
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 10
+env:
+  type: libero
+  task: libero_spatial
+  task_ids: null
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 5
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 4
+  repo_id: local/backstop_spatial_distractor_k4
+  root: data/lerobot/backstop_spatial_distractor_k4
+  on_existing: fail
+  shard: distractor
+  perturbation: distractor
+  perturbation_strength: 1.0
+  privileged: true
+  privileged_root: data/privileged
+wandb:
+  project: backstop
+  enabled: true
+  mode: offline
+tolerance:
+  min_success_rate: 0.30
+  max_success_rate: 0.70
+  fallback_num_steps: 1
+  enforce: false

@@ -1,0 +1,47 @@
+# Corpus A, action_noise shard: 50 episodes (5 per task x 10 tasks) at K=4,
+# strength 0.15 (calibrated -- pooled 53% across tasks 8/0/3, balanced 40/40/80,
+# same shape as object_pose's chosen strength).
+#
+# This is the one family where `action` and `action_policy` are expected to
+# differ (ADR-003) -- verify_corpus.py checks that split by reading
+# run.json's `perturbation` field, which this config sets.
+seed: 0
+output_dir: artifacts/eval/spatial_action_noise_k4
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 10
+env:
+  type: libero
+  task: libero_spatial
+  task_ids: null
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 5
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 4
+  repo_id: local/backstop_spatial_action_noise_k4
+  root: data/lerobot/backstop_spatial_action_noise_k4
+  on_existing: fail
+  shard: action_noise
+  perturbation: action_noise
+  perturbation_strength: 0.15
+  privileged: true
+  privileged_root: data/privileged
+wandb:
+  project: backstop
+  enabled: true
+  mode: offline
+tolerance:
+  min_success_rate: 0.30
+  max_success_rate: 0.70
+  fallback_num_steps: 1
+  enforce: false

@@ -38,12 +38,15 @@ def _as_array(column: list, trailing: tuple[int, ...]) -> np.ndarray:
     return flat.reshape((flat.shape[0], *trailing))
 
 
-def verify_artifacts(artifacts: Path) -> None:
+def verify_artifacts(artifacts: Path) -> dict:
+    """Returns the parsed `run.json` (or `{}`), so `main` can pass the recorded
+    perturbation family into `verify_dataset` -- which invariant applies to
+    `action` vs `action_policy` depends on it (ADR-003)."""
     eval_path, run_path = artifacts / "eval.json", artifacts / "run.json"
     check(eval_path.is_file(), "eval.json written", str(eval_path))
     check(run_path.is_file(), "run.json written", str(run_path))
     if not run_path.is_file():
-        return
+        return {}
     run = json.loads(run_path.read_text())
     check(bool(run.get("git_sha")), "run.json git_sha is set", str(run.get("git_sha"))[:12])
     check(
@@ -64,9 +67,10 @@ def verify_artifacts(artifacts: Path) -> None:
                 "at least one episode ended before the step cap",
                 f"{len(short)}/{len(lengths)} under {LIBERO_SPATIAL_MAX_STEPS}",
             )
+    return run
 
 
-def verify_dataset(dataset: Path) -> None:
+def verify_dataset(dataset: Path, perturbation: str = "clean") -> None:
     import pyarrow.parquet as pq
 
     info_path = dataset / "meta" / "info.json"
@@ -113,10 +117,36 @@ def verify_dataset(dataset: Path) -> None:
     if k > 1:
         spread = float(np.abs(samples[:, 1:] - samples[:, :1]).max())
         check(spread > 0.0, "K samples differ from the executed chunk", f"max spread={spread:.4g}")
-    check(
-        bool(np.allclose(action, chunk[:, 0], rtol=1e-3, atol=1e-4)),
-        "executed action == action_chunk[0] (same units)",
-    )
+
+    # ADR-003: `action_policy` (what the policy asked for) always equals the
+    # stored chunk's first row -- that invariant does not depend on which family
+    # recorded this shard. `action` (what was actually executed) equals
+    # `action_policy` for every family except `action_noise`, which is the one
+    # place they are allowed -- and required -- to differ. Checking both
+    # unconditionally is what would have caught the original bug (chunks left in
+    # policy space) and would also catch a shard silently recording the wrong one.
+    if "action_policy" in data:
+        action_policy = _as_array(data["action_policy"], (7,))
+        check(
+            bool(np.allclose(action_policy, chunk[:, 0], rtol=1e-3, atol=1e-4)),
+            "action_policy == action_chunk[0] (same units)",
+        )
+        if perturbation == "action_noise":
+            check(
+                not np.allclose(action, action_policy, rtol=1e-3, atol=1e-4),
+                "action_noise: action differs from action_policy",
+                "shard is labelled action_noise but nothing was perturbed",
+            )
+        else:
+            check(
+                bool(np.allclose(action, action_policy, rtol=1e-3, atol=1e-4)),
+                f"action == action_policy (perturbation={perturbation!r}, not action_noise)",
+            )
+    else:
+        check(
+            bool(np.allclose(action, chunk[:, 0], rtol=1e-3, atol=1e-4)),
+            "executed action == action_chunk[0] -- pre-ADR-003, no action_policy column",
+        )
     grip = float(np.abs(state[:, 6:8]).max())
     check(
         0.0 < grip <= GRIPPER_QPOS_ABS_MAX,
@@ -141,8 +171,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset", type=Path, required=True)
     args = parser.parse_args(argv)
 
-    verify_artifacts(args.artifacts)
-    verify_dataset(args.dataset)
+    run = verify_artifacts(args.artifacts)
+    verify_dataset(args.dataset, perturbation=run.get("perturbation", "clean"))
 
     width = max(len(name) for _, name, _ in _results)
     failed = 0

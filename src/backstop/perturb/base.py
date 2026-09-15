@@ -28,6 +28,14 @@ import numpy as np
 class Perturbation(Protocol):
     name: str
     strength: float
+    # Whether this family needs `PerturbedEnv` at all -- i.e. whether `on_reset`
+    # or `task_description` ever does anything. False for families that only
+    # implement `perturb_action` (applied in the record loop, not the wrapper):
+    # wrapping the env for them would be pure overhead, and would require every
+    # vec_env, including a minimal test fake, to expose in-process sub-envs it has
+    # no other reason to have. Read via `getattr(..., True)` at the call site, so
+    # a family that omits this attribute defaults to the safe assumption.
+    needs_env_hook: bool
 
     def on_reset(self, control_env: Any, rng: np.random.Generator) -> bool:
         """Mutate the simulator after reset. Return True if physics changed.
@@ -52,6 +60,7 @@ class NoPerturbation:
 
     name = "clean"
     strength = 0.0
+    needs_env_hook = False
 
     def on_reset(self, control_env: Any, rng: np.random.Generator) -> bool:
         return False
