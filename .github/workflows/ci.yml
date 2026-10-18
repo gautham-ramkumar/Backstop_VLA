@@ -41,6 +41,8 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
+      - name: Offscreen OpenGL for MuJoCo (same as the Dockerfile and justfile)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6 libosmesa6-dev
       - name: Install with sim extras, exactly as locked
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
@@ -50,4 +52,5 @@ jobs:
           BACKSTOP_ALLOWED_SKIPS: ""
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
           MUJOCO_GL: osmesa
+          PYOPENGL_PLATFORM: osmesa
         run: uv run pytest -rs

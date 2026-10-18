@@ -248,7 +248,10 @@ def scene_objects(suite: str, task_id: int) -> tuple[str, list[str]]:
     from libero.libero.benchmark import get_benchmark  # noqa: PLC0415
 
     task = get_benchmark(suite)().get_task(task_id)
-    root = Path(libero_pkg.__file__).parent / "bddl_files" / task.problem_folder
+    package_file = libero_pkg.__file__
+    if package_file is None:
+        raise FileNotFoundError("the libero package has no __file__; cannot find its BDDL files")
+    root = Path(package_file).parent / "bddl_files" / task.problem_folder
     text = (root / task.bddl_file).read_text()
     block = re.search(r"\(:objects(.*?)\)", text, re.S)
     if block is None:
