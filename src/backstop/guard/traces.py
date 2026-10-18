@@ -2,13 +2,10 @@
 evaluation script repeats on top of them.
 
 `scripts/evaluate_guard.py` writes one trace row per episode (shard, episode
-index, success, episode scores, per-step series). The `evaluate_*` scripts,
-`train_step_model.py`, `freeze_guard.py` and `pretest_reselect.py` all read
-those rows back, key them by (shard, episode), split them into calibration
-and held-out halves, and look up reviewed onset ranges. That code lived as
-private copies in each script, and some scripts loaded others by file path
-to borrow theirs. It lives here now, typed and tested, so a script imports
-from the package and never from another script.
+index, success, episode score, per-step disagreement series). The other
+scripts read those rows back, key them by (shard, episode), split them into
+calibration and held-out halves, and look up reviewed onset ranges, all
+through this module, never through each other.
 
 No privileged sim state (ADR-003). Onset ranges are read only to report lead
 time; nothing here fits on them.
@@ -21,8 +18,6 @@ from pathlib import Path
 
 import numpy as np
 
-from backstop.guard.combine import TRUST_FEATURES, apply_trust_head
-from backstop.guard.extract import PARQUET_SIGNALS
 from backstop.guard.split import EpisodeKey, stratified_split
 
 Row = dict[str, object]
@@ -33,10 +28,9 @@ FPS = 20
 # fail at, and `object_clean` is a different suite (evaluated on its own).
 EXCLUDED_SHARDS = frozenset({"language_absent", "object_clean"})
 OBJECT_SHARD = "object_clean"
+
+
 # Every per-step series a trace row carries.
-TRACE_SIGNALS = (*PARQUET_SIGNALS, "visual_precondition")
-
-
 def as_float(value: object) -> float:
     """A JSON number as float; raises on anything else instead of guessing."""
     if isinstance(value, int | float) and not isinstance(value, bool):
@@ -93,25 +87,12 @@ def split_halves(
     return calibration, held_out
 
 
-def running_trust(per_step: dict[str, list[float]], head: object) -> np.ndarray:
-    """Trust head applied to the running max of each feature, per step."""
-    matrix = np.stack(
-        [np.asarray(per_step[name], dtype=np.float64) for name in TRUST_FEATURES], axis=1
-    )
-    return apply_trust_head(head, np.maximum.accumulate(matrix, axis=0))  # type: ignore[arg-type]
-
-
-def series_map(rows: list[Row], name: str, head: object | None = None) -> dict[Key, np.ndarray]:
-    """key -> one per-step series. `trust_running` needs a fitted head."""
+def series_map(rows: list[Row], name: str) -> dict[Key, np.ndarray]:
+    """key -> one per-step series."""
     series: dict[Key, np.ndarray] = {}
     for row in rows:
         per_step = row["per_step"]
         if not isinstance(per_step, dict):
             raise ValueError(f"{episode_key(row)}: trace is missing per_step")
-        if name == "trust_running":
-            if head is None:
-                raise ValueError("trust_running needs a fitted head")
-            series[episode_key(row)] = running_trust(per_step, head)
-        else:
-            series[episode_key(row)] = np.asarray(per_step[name], dtype=np.float64)
+        series[episode_key(row)] = np.asarray(per_step[name], dtype=np.float64)
     return series

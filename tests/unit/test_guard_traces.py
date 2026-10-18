@@ -78,9 +78,7 @@ def test_onset_range_reads_only_a_reviewed_window(
     assert onset_range(labels, "clean", 1) is None  # type: ignore[arg-type]
 
 
-def test_series_map_reads_per_step_and_guards_trust_running() -> None:
-    rows = _rows()[:3]
-    series = series_map(rows, "action_chunk_disagreement")
+def test_series_map_reads_one_per_step_series() -> None:
+    series = series_map(_rows()[:3], "action_chunk_disagreement")
     np.testing.assert_allclose(series[("clean", 2)], [0.2, 0.4])
-    with pytest.raises(ValueError, match="fitted head"):
-        series_map(rows, "trust_running")
+    assert series[("clean", 0)].dtype == np.float64

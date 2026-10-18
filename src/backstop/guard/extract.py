@@ -1,10 +1,9 @@
 """I/O for the guard package.
 
-Reads the columns the three dataset signals need (`action_chunk_samples`,
-`action_chunk`, `action`, `observation.state`) and reduces each episode
-immediately, so a raw chunk-sample array is never held for more than one
-episode. The visual precondition is filled in later from frames; it is not
-in the parquet. Reuses `backstop.label.extract` for shard discovery, the
+Reads `action_chunk_samples` (the K sampled plans per step) and `next.success`
+one episode at a time, and reduces each episode to its disagreement series
+before reading the next, so a raw chunk-sample array is never held for more
+than one episode. Uses `backstop.label.extract` for shard discovery, the
 dataset root, and the task string. No privileged sim state.
 """
 
@@ -15,17 +14,11 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
-from backstop.guard.signals import (
-    action_chunk_disagreement,
-    action_chunk_magnitude,
-    episode_score,
-    progress_monitoring,
-    temporal_self_consistency,
-    velocity_normalized_consistency,
-)
+from backstop.guard.signals import action_chunk_disagreement, episode_score
 from backstop.label.extract import (
     discover_shards,
     load_episode_meta,
@@ -36,11 +29,7 @@ from backstop.parquet_io import as_array, read_parquet_pydict
 
 logger = logging.getLogger(__name__)
 
-PARQUET_SIGNALS = (
-    "action_chunk_disagreement",
-    "temporal_self_consistency",
-    "progress_monitoring",
-)
+SIGNAL = "action_chunk_disagreement"
 
 
 @dataclass(frozen=True)
@@ -61,8 +50,46 @@ def _feature_shape(dataset_root: Path, feature: str) -> tuple[int, ...]:
     return tuple(info["features"][feature]["shape"])
 
 
-def _reduce(rows: list[list[float]], trailing: tuple[int, ...]) -> np.ndarray:
-    return as_array(rows, trailing)
+def _iter_episode_rows(
+    dataset_root: Path, columns: list[str]
+) -> Iterator[tuple[int, dict[str, list[Any]]]]:
+    """(episode_index, column -> that episode's rows), one episode at a time.
+
+    LeRobot writes episodes contiguously, so an episode is complete when the
+    next one starts or the files end. Raises if an episode reappears after
+    another began, rather than yield half of it.
+    """
+    files = sorted((dataset_root / "data").rglob("*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"no data parquet under {dataset_root}")
+    current: int | None = None
+    rows: dict[str, list[Any]] = {}
+    finished: set[int] = set()
+    for file in files:
+        table = read_parquet_pydict(file, columns=["episode_index", *columns])
+        for i, index in enumerate(table["episode_index"]):
+            index = int(index)
+            if index != current:
+                if current is not None:
+                    yield current, rows
+                    finished.add(current)
+                if index in finished:
+                    raise ValueError(f"{dataset_root}: episode {index} is not contiguous on disk")
+                current, rows = index, {name: [] for name in columns}
+            for name in columns:
+                rows[name].append(table[name][i])
+    if current is not None:
+        yield current, rows
+
+
+def iter_episode_samples(
+    shard: str, *, lerobot_root: str | Path, eval_root: str | Path
+) -> Iterator[tuple[int, np.ndarray]]:
+    """(episode_index, (T, K, chunk, dim) samples), one episode in memory at a time."""
+    dataset_path, _provenance = resolve_dataset_root(eval_root, shard, lerobot_root)
+    shape = _feature_shape(dataset_path, "action_chunk_samples")
+    for index, rows in _iter_episode_rows(dataset_path, ["action_chunk_samples"]):
+        yield index, as_array(rows["action_chunk_samples"], shape)
 
 
 def load_shard_signals(
@@ -72,131 +99,30 @@ def load_shard_signals(
     eval_root: str | Path,
 ) -> list[EpisodeSignal]:
     dataset_path, provenance = resolve_dataset_root(eval_root, shard, lerobot_root)
-    k, chunk_size, action_dim = _feature_shape(dataset_path, "action_chunk_samples")
-    state_dim = _feature_shape(dataset_path, "observation.state")[0]
+    shape = _feature_shape(dataset_path, "action_chunk_samples")
     tasks = load_episode_meta(dataset_path)
-
-    files = sorted((dataset_path / "data").rglob("*.parquet"))
-    if not files:
-        raise FileNotFoundError(f"no data parquet under {dataset_path}")
-
-    samples_by_ep: dict[int, list[list[float]]] = {}
-    chunks_by_ep: dict[int, list[list[float]]] = {}
-    actions_by_ep: dict[int, list[list[float]]] = {}
-    states_by_ep: dict[int, list[list[float]]] = {}
-    success: dict[int, bool] = {}
-    columns = [
-        "episode_index",
-        "action_chunk_samples",
-        "action_chunk",
-        "action",
-        "observation.state",
-        "next.success",
-    ]
-    for file in files:
-        table = read_parquet_pydict(file, columns=columns)
-        zipped = zip(
-            table["episode_index"],
-            table["action_chunk_samples"],
-            table["action_chunk"],
-            table["action"],
-            table["observation.state"],
-            table["next.success"],
-            strict=True,
-        )
-        for idx, samples, chunk, executed, state, succ in zipped:
-            idx = int(idx)
-            samples_by_ep.setdefault(idx, []).append(samples)
-            chunks_by_ep.setdefault(idx, []).append(chunk)
-            actions_by_ep.setdefault(idx, []).append(executed)
-            states_by_ep.setdefault(idx, []).append(state)
-            success[idx] = success.get(idx, False) or bool(succ)
-
     perturbation = provenance.get("perturbation", "clean")
     strength = provenance.get("perturbation_strength", 0.0)
+
     results = []
-    for idx in sorted(samples_by_ep):
-        sample_arr = _reduce(samples_by_ep[idx], (k, chunk_size, action_dim))
-        chunk_arr = _reduce(chunks_by_ep[idx], (chunk_size, action_dim))
-        action_arr = _reduce(actions_by_ep[idx], (action_dim,))
-        state_arr = _reduce(states_by_ep[idx], (state_dim,))
-        per_step = {
-            "action_chunk_disagreement": action_chunk_disagreement(sample_arr),
-            "temporal_self_consistency": temporal_self_consistency(chunk_arr),
-            "progress_monitoring": progress_monitoring(state_arr, action_arr),
-        }
+    columns = ["action_chunk_samples", "next.success"]
+    for index, rows in _iter_episode_rows(dataset_path, columns):
+        samples = as_array(rows["action_chunk_samples"], shape)
+        per_step = {SIGNAL: action_chunk_disagreement(samples)}
         results.append(
             EpisodeSignal(
                 shard=shard,
-                episode_index=idx,
-                success=success[idx],
-                n_steps=sample_arr.shape[0],
-                task=str(tasks.get(idx, {}).get("task", "")),
-                scores={name: episode_score(values) for name, values in per_step.items()},
+                episode_index=index,
+                success=any(bool(flag) for flag in rows["next.success"]),
+                n_steps=samples.shape[0],
+                task=str(tasks.get(index, {}).get("task", "")),
+                scores={SIGNAL: episode_score(per_step[SIGNAL])},
                 per_step=per_step,
                 perturbation=str(perturbation),
                 perturbation_strength=float(strength) if strength is not None else 0.0,
             )
         )
-    return results
-
-
-def load_chunk_series(
-    shards: list[str], *, lerobot_root: str | Path, eval_root: str | Path
-) -> dict[tuple[str, int], dict[str, np.ndarray]]:
-    """(shard, episode) -> the two paper signals scored from `action_chunk`.
-
-    Not in `traces.jsonl` (they were added after it), so read from parquet.
-    One shard's chunks are held at a time.
-    """
-    series: dict[tuple[str, int], dict[str, np.ndarray]] = {}
-    for shard in shards:
-        dataset_path, _provenance = resolve_dataset_root(eval_root, shard, lerobot_root)
-        chunk_size, action_dim = _feature_shape(dataset_path, "action_chunk")
-        by_episode: dict[int, list[list[float]]] = {}
-        for file in sorted((dataset_path / "data").rglob("*.parquet")):
-            table = read_parquet_pydict(file, columns=["episode_index", "action_chunk"])
-            for index, chunk in zip(table["episode_index"], table["action_chunk"], strict=True):
-                by_episode.setdefault(int(index), []).append(chunk)
-        for index, rows in by_episode.items():
-            chunks = _reduce(rows, (chunk_size, action_dim))
-            series[(shard, index)] = {
-                "action_chunk_magnitude": action_chunk_magnitude(chunks),
-                "velocity_normalized_consistency": velocity_normalized_consistency(chunks),
-            }
-    return series
-
-
-def iter_episode_samples(
-    shard: str, *, lerobot_root: str | Path, eval_root: str | Path
-) -> Iterator[tuple[int, np.ndarray]]:
-    """(episode_index, (T, K, chunk, dim) samples), one episode in memory at a time.
-
-    LeRobot writes episodes contiguously, so an episode is complete when the
-    next one starts (or the file list ends). Raises if an episode reappears
-    after another one began, rather than yield half of it.
-    """
-    dataset_path, _provenance = resolve_dataset_root(eval_root, shard, lerobot_root)
-    shape = _feature_shape(dataset_path, "action_chunk_samples")
-    current: int | None = None
-    rows: list[list[float]] = []
-    finished: set[int] = set()
-    for file in sorted((dataset_path / "data").rglob("*.parquet")):
-        table = read_parquet_pydict(file, columns=["episode_index", "action_chunk_samples"])
-        for index, samples in zip(
-            table["episode_index"], table["action_chunk_samples"], strict=True
-        ):
-            index = int(index)
-            if index != current:
-                if current is not None:
-                    yield current, _reduce(rows, shape)
-                    finished.add(current)
-                if index in finished:
-                    raise ValueError(f"{shard}: episode {index} is not contiguous on disk")
-                current, rows = index, []
-            rows.append(samples)
-    if current is not None:
-        yield current, _reduce(rows, shape)
+    return sorted(results, key=lambda episode: episode.episode_index)
 
 
 def load_corpus_signals(

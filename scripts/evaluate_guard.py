@@ -1,23 +1,21 @@
 #!/usr/bin/env python
-"""Evaluate every guard signal that does not need the taxonomy.
+"""Score the guard's signal on corpus A and write the traces every other script reads.
 
-Reads corpus A, scores action-chunk disagreement, temporal self-consistency,
-and progress monitoring from the dataset, and the visual precondition from
-the first agentview frame (OWLv2 detector score for the instructed object).
-Each signal is calibrated on one stratified half and measured on the other
-(ADR-004). A logistic trust head combines the
-signals, fit on the calibration half only. Bootstrap intervals and 5-fold
-cross-validation are written beside the point estimates.
+Reads corpus A, scores action-chunk disagreement per step, and writes:
 
-Lead time is computed by the later scripts, not here.
-`language_absent` stays out of the pooled number.
+- `artifacts/guard/traces.jsonl`: one row per episode with its per-step
+  series. `evaluate_stopwatch.py` (the headline), `freeze_guard.py` and
+  `evaluate_presence.py` all start from it.
+- The secondary single-split report (ADR-001, ADR-004): calibrated on one
+  stratified half of corpus A, measured on the other, with a bootstrap
+  interval and 5-fold cross-validation.
+- The unseen suite (`object_clean`), scored with the frozen spatial line.
 
-`object_clean` (LIBERO-Object) is the unseen suite. It never touches a
-threshold or the trust head: every signal and the head are fit on spatial
-only, then applied frozen to it, and it is reported on its own.
+`language_absent` stays out of the pooled number and is reported on its own.
+The other signals and the trust head that this script used to score are in
+docs/experiments.md.
 
     uv run python scripts/evaluate_guard.py
-    uv run python scripts/evaluate_guard.py --skip-visual
 """
 
 from __future__ import annotations
@@ -31,19 +29,9 @@ import numpy as np
 from backstop.eval.report import write_secondary_report
 from backstop.guard.calibrate import bootstrap_rates
 from backstop.guard.calibrate import evaluate as eval_metrics
-from backstop.guard.extract import (
-    PARQUET_SIGNALS,
-    EpisodeSignal,
-    load_corpus_signals,
-)
-from backstop.guard.signals import (
-    episode_score,
-    instructed_object_phrase,
-    visual_precondition,
-)
-from backstop.guard.summarize import report_signal, report_trust_head
+from backstop.guard.extract import SIGNAL, EpisodeSignal, load_corpus_signals
+from backstop.guard.summarize import report_signal
 from backstop.guard.traces import as_float
-from backstop.label.extract import resolve_dataset_root
 from backstop.schema import DETECTION_METRIC, load_metric_contract
 
 QUARANTINED_SHARDS = frozenset({"language_absent"})
@@ -51,60 +39,7 @@ QUARANTINED_SHARDS = frozenset({"language_absent"})
 HOLDOUT_SHARDS = frozenset({"object_clean"})
 
 
-def _attach_visual(
-    by_shard: dict[str, list[EpisodeSignal]],
-    *,
-    lerobot_root: Path,
-    eval_root: Path,
-) -> None:
-    from backstop.guard.vision import detector_scores, first_agentview_frame  # noqa: PLC0415
-
-    images = []
-    phrases = []
-    owners: list[tuple[str, int]] = []
-    for shard, episodes in by_shard.items():
-        dataset_root, _provenance = resolve_dataset_root(eval_root, shard, lerobot_root)
-        for episode in episodes:
-            images.append(first_agentview_frame(dataset_root, episode.episode_index))
-            phrases.append(instructed_object_phrase(episode.task))
-            owners.append((shard, episode.episode_index))
-    print(f"visual precondition: embedding {len(images)} first frames")
-    # `visual_precondition` negates a presence score, so this stays "higher
-    # means more likely missing". One line is fit on spatial successes, which
-    # all name the black bowl; the per-object gate is scripts/evaluate_presence.py.
-    scores = detector_scores(images, phrases)
-    score_of = {owners[i]: float(scores[i]) for i in range(len(owners))}
-    for shard, episodes in by_shard.items():
-        updated = []
-        for episode in episodes:
-            value = score_of[(shard, episode.episode_index)]
-            per_step = dict(episode.per_step)
-            per_step["visual_precondition"] = visual_precondition(np_full(episode.n_steps, value))
-            episode_scores = dict(episode.scores)
-            episode_scores["visual_precondition"] = episode_score(per_step["visual_precondition"])
-            updated.append(
-                EpisodeSignal(
-                    shard=episode.shard,
-                    episode_index=episode.episode_index,
-                    success=episode.success,
-                    n_steps=episode.n_steps,
-                    task=episode.task,
-                    scores=episode_scores,
-                    per_step=per_step,
-                    perturbation=episode.perturbation,
-                    perturbation_strength=episode.perturbation_strength,
-                )
-            )
-        by_shard[shard] = updated
-
-
-def np_full(n_steps: int, value: float) -> np.ndarray:
-    return np.full(n_steps, value, dtype=np.float64)
-
-
-def _write_traces(
-    path: Path, episodes: list[EpisodeSignal], trust: dict[tuple[str, int], float]
-) -> None:
+def _write_traces(path: Path, episodes: list[EpisodeSignal]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as handle:
         for episode in episodes:
@@ -119,7 +54,6 @@ def _write_traces(
                 "n_steps": episode.n_steps,
                 "task": episode.task,
                 "scores": episode.scores,
-                "trust": trust.get((episode.shard, episode.episode_index)),
                 "per_step": per_step,
             }
             handle.write(json.dumps(row) + "\n")
@@ -200,7 +134,6 @@ def _print_report(values: dict[str, object]) -> None:
 
 def _markdown(
     reports: list[dict[str, object]],
-    visual_note: str,
     holdout: dict[str, dict[str, dict[str, object]]],
 ) -> str:
     lines = [
@@ -211,12 +144,10 @@ def _markdown(
         "`language_absent` is reported on its own and is not in the pooled number.",
         "The table is the single-crossing rule: stop if the episode peak crosses",
         "the line.",
-        'One split (seed 0) only: see "Against a stopwatch" for the same rules',
-        "over 20 splits, where the false-stop rate averages above 5%.",
+        'One split (seed 0) only. "Against a stopwatch" below runs the headline',
+        "rule over 20 splits.",
         "LIBERO-Object is not in this table. It is the unseen suite, scored",
-        "below with the frozen spatial thresholds. LIBERO-plus is not recorded.",
-        "",
-        visual_note,
+        "below with the frozen spatial threshold. LIBERO-plus is not recorded.",
         "",
         "| signal | detection | 95% interval | false-stop | 5-fold mean |",
         "|---|---:|---:|---:|---:|",
@@ -239,7 +170,7 @@ def _markdown(
     lines.extend(
         [
             "",
-            "Per-family counts are in each `artifacts/guard/<signal>/guard_eval.json`.",
+            "Per-family counts are in `artifacts/guard/action_chunk_disagreement/guard_eval.json`.",
             "A family cell with a handful of eval failures is a direction, not a rate.",
             "",
         ]
@@ -250,7 +181,7 @@ def _markdown(
             [
                 f"## Unseen suite: `{shard}`",
                 "",
-                "Every threshold and the trust head were fit on spatial only and",
+                "The threshold was fit on spatial only and",
                 f"applied here unchanged. All {sample['n_success']} successes and",
                 f"{sample['n_failure']} failures are eval episodes.",
                 "",
@@ -310,7 +241,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report-path", type=Path, default=Path("docs/evaluation.md"))
     parser.add_argument("--eval-fraction", type=float, default=0.3)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--skip-visual", action="store_true")
     args = parser.parse_args(argv)
 
     contract = load_metric_contract()
@@ -327,24 +257,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"held-out shard {shard!r} is recorded but did not load (run.json or dataset)")
             return 1
 
-    visual_note = "Visual precondition was not run (`--skip-visual`)."
-    if not args.skip_visual:
-        try:
-            _attach_visual(by_shard, lerobot_root=args.lerobot_root, eval_root=args.eval_root)
-            visual_note = (
-                "Visual precondition is the negated OWLv2 detector score for the "
-                "instructed object in the first agentview frame. One line, set on "
-                "spatial successes; the per-object gate is reported further down."
-            )
-        except Exception as exc:  # noqa: BLE001 - recorded, and the other signals still report
-            visual_note = f"Visual precondition failed to run ({exc}). The other signals did."
-            print(visual_note)
-
-    signal_names: list[str] = list(PARQUET_SIGNALS)
-    sample = next(iter(by_shard.values()))[0]
-    if "visual_precondition" in sample.scores:
-        signal_names.append("visual_precondition")
-
     quarantined = [
         ep for shard, eps in by_shard.items() if shard in QUARANTINED_SHARDS for ep in eps
     ]
@@ -352,98 +264,49 @@ def main(argv: list[str] | None = None) -> int:
     pooled = [ep for shard, eps in by_shard.items() if shard not in excluded for ep in eps]
     held_out = {shard: eps for shard, eps in by_shard.items() if shard in HOLDOUT_SHARDS}
     holdout: dict[str, dict[str, dict[str, object]]] = {shard: {} for shard in held_out}
-    reports: list[dict[str, object]] = []
-    for name in signal_names:
-        values = report_signal(
-            pooled,
-            name,
-            metric=contract,
-            eval_fraction=args.eval_fraction,
-            seed=args.seed,
+    values = report_signal(
+        pooled,
+        SIGNAL,
+        metric=contract,
+        eval_fraction=args.eval_fraction,
+        seed=args.seed,
+    )
+    threshold = as_float(values["threshold"])
+    quarantine_report = {}
+    if quarantined:
+        metrics = eval_metrics(
+            np.asarray([ep.scores[SIGNAL] for ep in quarantined if ep.success], dtype=np.float64),
+            np.asarray(
+                [ep.scores[SIGNAL] for ep in quarantined if not ep.success], dtype=np.float64
+            ),
+            threshold,
         )
-        quarantine_report = {}
-        if quarantined:
-            metrics = eval_metrics(
-                np.asarray(
-                    [episode.scores[name] for episode in quarantined if episode.success],
-                    dtype=np.float64,
-                ),
-                np.asarray(
-                    [episode.scores[name] for episode in quarantined if not episode.success],
-                    dtype=np.float64,
-                ),
-                as_float(values["threshold"]),
-            )
-            quarantine_report["language_absent"] = {
-                "n_failure": metrics.n_eval_failure,
-                "detection_rate": metrics.detection_rate,
-                "note": (
-                    "0% success by construction (Week 2, quarantined) -- excluded "
-                    "from calibration and pooled detection."
-                ),
-            }
-        values["quarantined"] = quarantine_report
-        for shard, episodes in held_out.items():
-            holdout[shard][name] = _score_holdout(
-                episodes,
-                [episode.scores[name] for episode in episodes],
-                as_float(values["threshold"]),
-                seed=args.seed,
-            )
-        report_path = write_secondary_report(
-            output_dir=args.output_dir / name,
-            metric_name=DETECTION_METRIC,
-            values=values,
-            metric=contract,
+        quarantine_report["language_absent"] = {
+            "n_failure": metrics.n_eval_failure,
+            "detection_rate": metrics.detection_rate,
+            "note": (
+                "0% success by construction (Week 2, quarantined) -- excluded "
+                "from calibration and pooled detection."
+            ),
+        }
+    values["quarantined"] = quarantine_report
+    for shard, episodes in held_out.items():
+        holdout[shard][SIGNAL] = _score_holdout(
+            episodes, [episode.scores[SIGNAL] for episode in episodes], threshold, seed=args.seed
         )
-        _print_report(values)
-        for shard, row in quarantine_report.items():
-            print(f"  {shard} quarantined detection={row['detection_rate']:.3f}")
-        for shard, by_signal in holdout.items():
-            _print_holdout(name, shard, by_signal[name])
-        print(f"  wrote {report_path}")
-        reports.append(values)
-
-    trust_of: dict[tuple[str, int], float] = {}
-    from backstop.guard.combine import TRUST_FEATURES  # noqa: PLC0415
-
-    # The visual precondition keeps its own row above but is not a head input.
-    head_names = [name for name in signal_names if name in TRUST_FEATURES]
-    if len(head_names) >= 2:
-        trust_values, head = report_trust_head(
-            pooled,
-            tuple(head_names),
-            metric=contract,
-            eval_fraction=args.eval_fraction,
-            seed=args.seed,
-        )
-        trust_path = write_secondary_report(
-            output_dir=args.output_dir / "trust_head",
-            metric_name=DETECTION_METRIC,
-            values=trust_values,
-            metric=contract,
-        )
-        _print_report(trust_values)
-        print(f"  wrote {trust_path}")
-        reports.append(trust_values)
-        from backstop.guard.combine import apply_trust_head  # noqa: PLC0415
-
-        matrix = [[episode.scores[name] for name in head_names] for episode in pooled]
-        probabilities = apply_trust_head(head, np.asarray(matrix, dtype=np.float64))
-        for episode, probability in zip(pooled, probabilities, strict=True):
-            trust_of[(episode.shard, episode.episode_index)] = float(probability)
-        for shard, episodes in held_out.items():
-            held_matrix = [[episode.scores[name] for name in head_names] for episode in episodes]
-            held_trust = apply_trust_head(head, np.asarray(held_matrix, dtype=np.float64))
-            for episode, probability in zip(episodes, held_trust, strict=True):
-                trust_of[(episode.shard, episode.episode_index)] = float(probability)
-            holdout[shard]["trust_head"] = _score_holdout(
-                episodes,
-                [float(value) for value in held_trust],
-                as_float(trust_values["threshold"]),
-                seed=args.seed,
-            )
-            _print_holdout("trust_head", shard, holdout[shard]["trust_head"])
+    report_path = write_secondary_report(
+        output_dir=args.output_dir / SIGNAL,
+        metric_name=DETECTION_METRIC,
+        values=values,
+        metric=contract,
+    )
+    _print_report(values)
+    for shard, row in quarantine_report.items():
+        print(f"  {shard} quarantined detection={row['detection_rate']:.3f}")
+    for shard, by_signal in holdout.items():
+        _print_holdout(SIGNAL, shard, by_signal[SIGNAL])
+    print(f"  wrote {report_path}")
+    reports = [values]
 
     for shard, by_signal in holdout.items():
         holdout_path = args.output_dir / "holdout" / f"{shard}.json"
@@ -466,10 +329,10 @@ def main(argv: list[str] | None = None) -> int:
 
     all_episodes = [episode for episodes in by_shard.values() for episode in episodes]
     trace_path = args.output_dir / "traces.jsonl"
-    _write_traces(trace_path, all_episodes, trust_of)
+    _write_traces(trace_path, all_episodes)
     print(f"wrote {trace_path}")
 
-    text = _splice(args.report_path, _markdown(reports, visual_note, holdout))
+    text = _splice(args.report_path, _markdown(reports, holdout))
     args.report_path.parent.mkdir(parents=True, exist_ok=True)
     args.report_path.write_text(text)
     print(f"wrote {args.report_path}")

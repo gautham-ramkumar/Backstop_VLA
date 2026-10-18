@@ -26,11 +26,13 @@ Then four questions:
    that have it). Scene contents come from the LIBERO BDDL files and are
    ground truth for scoring only, never a guard input. The `distractor`
    family adds a milk carton to spatial scenes, so those count as milk present.
-4. With `--baselines`, the CLIP and SmolVLM2 scores this replaced, on the
-   same 5% spatial line as before.
+4. For comparison, when the headline guard (disagreement OR stopwatch)
+   stops the same missing-object runs.
 
-    PYTHONPATH=src python scripts/evaluate_presence.py
-    PYTHONPATH=src python scripts/evaluate_presence.py --baselines   # +5 min
+The CLIP and SmolVLM2 scores this replaced are recorded in
+docs/experiments.md.
+
+    uv run python scripts/evaluate_presence.py
 """
 
 from __future__ import annotations
@@ -38,12 +40,11 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 
 from backstop.env.libero import scene_objects
-from backstop.guard.calibrate import calibrate_threshold
 from backstop.guard.presence import PresenceGate
 from backstop.guard.scoring import auroc, fit_stopwatch_from_rows
 from backstop.guard.signals import instructed_object_phrase
@@ -51,97 +52,11 @@ from backstop.guard.split import EpisodeKey, stratified_split
 from backstop.guard.stopwatch import stop_step
 from backstop.guard.traces import OBJECT_SHARD, episode_key, load_jsonl, series_map, spatial_pool
 from backstop.guard.vision import (
-    CLIP_MODEL,
     detector_score_matrix,
     detector_scores,
     first_agentview_frame,
 )
 from backstop.label.extract import resolve_dataset_root
-
-VLM_MODEL = "HuggingFaceTB/SmolVLM2-500M-Instruct"
-SCENE_PROMPTS = ("a table", "a robot arm", "a floor", "an object")
-
-
-def _crops(image: np.ndarray) -> list[np.ndarray]:
-    """Whole frame, a 2x2 grid at 60%, and a 3x3 grid at 45%."""
-    size = image.shape[0]
-    out = [image]
-    for n, scale in ((2, 0.6), (3, 0.45)):
-        side = int(size * scale)
-        stride = (size - side) // (n - 1)
-        for i in range(n):
-            for j in range(n):
-                out.append(image[i * stride : i * stride + side, j * stride : j * stride + side])
-    return out
-
-
-def clip_scores(
-    images: list[np.ndarray], phrases: list[str], device: str
-) -> dict[str, list[float]]:
-    import torch  # noqa: PLC0415
-    from transformers import CLIPModel, CLIPProcessor  # noqa: PLC0415
-
-    processor: Any = cast(Any, CLIPProcessor).from_pretrained(CLIP_MODEL)
-    model: Any = cast(Any, CLIPModel).from_pretrained(CLIP_MODEL).to(device).eval()
-
-    def _norm(features: Any) -> Any:
-        features = getattr(features, "pooler_output", features)
-        return features / features.norm(dim=-1, keepdim=True)
-
-    def _text(texts: list[str]) -> Any:
-        inputs = processor(text=texts, return_tensors="pt", padding=True).to(device)
-        with torch.no_grad():
-            return _norm(model.get_text_features(**inputs))
-
-    unique = sorted(set(phrases))
-    text = _text([f"a photo of a {phrase}" for phrase in unique])
-    row_of = {phrase: i for i, phrase in enumerate(unique)}
-    scene = _text([f"a photo of {prompt}" for prompt in SCENE_PROMPTS]).mean(0)
-    scene = scene / scene.norm()
-
-    out: dict[str, list[float]] = {"clip_whole": [], "clip_contrast": [], "clip_crops": []}
-    for image, phrase in zip(images, phrases, strict=True):
-        inputs = processor(images=_crops(image), return_tensors="pt").to(device)
-        with torch.no_grad():
-            features = _norm(model.get_image_features(**inputs))
-        target = features @ text[row_of[phrase]]
-        contrast = target - features @ scene
-        out["clip_whole"].append(-float(target[0]))
-        out["clip_contrast"].append(-float(contrast[0]))
-        out["clip_crops"].append(-float(contrast.max()))
-    return out
-
-
-def vlm_scores(images: list[np.ndarray], phrases: list[str], device: str) -> list[float]:
-    import torch  # noqa: PLC0415
-    from PIL import Image  # noqa: PLC0415
-    from transformers import AutoModelForImageTextToText, AutoProcessor  # noqa: PLC0415
-
-    processor: Any = AutoProcessor.from_pretrained(VLM_MODEL)
-    model: Any = (
-        cast(Any, AutoModelForImageTextToText)
-        .from_pretrained(VLM_MODEL, dtype=torch.bfloat16)
-        .to(device)
-    )
-    model.eval()
-    tokenizer = processor.tokenizer
-    yes = [tokenizer.encode(word, add_special_tokens=False)[0] for word in ("Yes", " Yes", "yes")]
-    no = [tokenizer.encode(word, add_special_tokens=False)[0] for word in ("No", " No", "no")]
-    out: list[float] = []
-    for image, phrase in zip(images, phrases, strict=True):
-        question = f"Is there a {phrase} in this image? Answer yes or no."
-        messages = [
-            {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": question}]}
-        ]
-        prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
-        inputs = processor(text=prompt, images=[Image.fromarray(image)], return_tensors="pt")
-        inputs = inputs.to(device, torch.bfloat16)
-        with torch.no_grad():
-            logits = model(**inputs).logits[0, -1].float()
-        log_probs = torch.log_softmax(logits, dim=-1)
-        out.append(float(torch.logsumexp(log_probs[no], 0) - torch.logsumexp(log_probs[yes], 0)))
-    return out
-
 
 GROCERIES = (
     "alphabet soup",
@@ -288,7 +203,6 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("artifacts/guard/presence/report.json"))
     parser.add_argument("--eval-fraction", type=float, default=0.3)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--baselines", action="store_true", help="also score CLIP and SmolVLM2")
     args = parser.parse_args()
 
     import torch  # noqa: PLC0415
@@ -329,9 +243,6 @@ def main() -> None:
         rows, split.calibration, args.eval_fraction, args.seed
     )
     _print_gate(report)
-
-    if args.baselines:
-        report["baselines"] = baselines(rows, images, split, device)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
@@ -392,40 +303,6 @@ def _print_gate(report: dict[str, Any]) -> None:
                 row = entry[scope]
                 cells.append(f"{scope} {row['flagged']}/{row['n']} (AUROC {row['auroc']:.2f})")
         print(f"  {name:18s} " + ", ".join(cells))
-
-
-def baselines(
-    rows: list[dict[str, Any]], images: list[np.ndarray], split: Any, device: str
-) -> dict[str, object]:
-    """The replaced scores, on one 5% line set from spatial successes."""
-    phrases = [instructed_object_phrase(row["task"]) for row in rows]
-    scores = clip_scores(images, phrases, device)
-    scores["vlm_no_minus_yes"] = vlm_scores(images, phrases, device)
-
-    def _in(row: dict[str, Any], keys: frozenset[EpisodeKey]) -> bool:
-        return EpisodeKey(row["shard"], row["episode_index"]) in keys
-
-    out: dict[str, object] = {}
-    for name, values in scores.items():
-        value = np.asarray(values, dtype=np.float64)
-        cal = [i for i, row in enumerate(rows) if row["success"] and _in(row, split.calibration)]
-        line = calibrate_threshold(value[cal], BUDGET)
-        absent = [i for i, row in enumerate(rows) if row["shard"] == "language_absent"]
-        present = [i for i, row in enumerate(rows) if row["shard"] != "language_absent"]
-        held = [i for i, row in enumerate(rows) if row["success"] and _in(row, split.eval)]
-        obj = [i for i, row in enumerate(rows) if row["shard"] == OBJECT_SHARD]
-        out[name] = {
-            "line": line,
-            "absent_caught": int((value[absent] >= line).sum()),
-            "n_absent": len(absent),
-            "spatial_held_out_success_stops": int((value[held] >= line).sum()),
-            "n_spatial_held_out_success": len(held),
-            "object_suite_stops": int((value[obj] >= line).sum()),
-            "n_object_suite": len(obj),
-            "auroc_absent_vs_present": auroc(value[absent], value[present]),
-        }
-        print(f"baseline {name}: {out[name]}")
-    return out
 
 
 if __name__ == "__main__":

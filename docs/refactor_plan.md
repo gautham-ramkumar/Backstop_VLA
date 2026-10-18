@@ -1,26 +1,27 @@
-# Refactor plan: seams, typed corpus, signal registry
+# Refactor plan: seams, typed corpus, smaller code
 
-**Status:** proposed, not started. Prerequisite: the Week 3–6 work is committed, so
-every stage has a clean base to diff against.
+**Status:** proposed, not started. The Week 3–6 work is committed, and the experiments
+that lost were archived on 2026-10-18 (tag `research-archive-2026-10`,
+[experiments.md](experiments.md)). This plan starts from that smaller base.
 
 ## Why
 
 The 2026-10 review found the research logic sound and the structure hard to change:
 
-- **Adding things is expensive.** A new guard signal touches 6–7 places, a new policy
-  about 7, and there is no seam for a second simulator.
+- **Adding things is expensive.** A new policy needs about 7 edits, and there is no
+  seam for a second simulator.
 - **The rollout loop does everything in one place.** `_rollout_one` is 146 lines with 18
   parameters and about a dozen jobs. The recovery runner has to slot into the middle of it.
 - **Third-party internals are scattered.** Private lerobot/LIBERO attributes
   (`unwrapped._env`, `_format_raw_obs`, `_task_bddl_file`, `_get_action_chunk`, ...) are
   reached from four packages, so a dependency upgrade can break any of them.
-- **One "episode" has five shapes.** `EpisodeSignal`, trace-row dicts, label-row dicts,
-  privileged npz and loop stats rows, plus three kinds of key. The dicts cost 19
-  `type: ignore`s and the `as_float`/`as_int` converters.
+- **One "episode" has several shapes.** `EpisodeSignal`, trace-row dicts, label-row
+  dicts, privileged npz and loop stats rows, plus three kinds of key. The untyped dicts
+  are why `as_float`/`as_int` and the remaining `type: ignore`s exist.
 - **`guard` depends on `label`** just to find and read datasets.
 
-The goal is the recovery runner as a small, testable addition, and new signals,
-policies and perturbation families as one- or two-file changes.
+The goal is the recovery runner as a small, testable addition, and new policies and
+perturbation families as one- or two-file changes.
 
 ## Ground rules (every stage)
 
@@ -44,32 +45,33 @@ policies and perturbation families as one- or two-file changes.
 
 ## Size: where we are, and the target
 
-Measured on 2026-10-18, code lines only:
+Code lines only, comments, docstrings and blank lines excluded:
 
 | | `src/` + `scripts/` | `tests/` |
 |---|---|---|
-| Before the October cleanup | 7,419 | 2,421 |
-| Now | 7,450 | 2,849 |
-| **Target after this plan** | **~6,500 (−12%)** | ~3,200 |
+| Archive tag (all experiments live) | 7,450 | 2,849 |
+| **After archiving the losing experiments** | **5,405 (−27%)** | 2,605 |
+| **Target after this plan** | **~5,000 (−33% overall)** | ~2,900 |
 
-The October cleanup removed about 290 duplicated lines from scripts. Those lines were
-spent on shared helpers, the bug fixes and the recovery groundwork, so the library
-stayed flat. Splitting code into well-named pieces doesn't shrink it by itself. The
-shrinking comes from deleting things, so Stage C does that first: it's cheap and low
-risk, and it leaves less code for every later stage to move.
+Most of the shrinking has already happened, by deleting experiments rather than by
+refactoring. The archive removed 12 files and trimmed 9 others, and every live number
+stayed byte-identical. The stages below mostly add structure, which costs a few lines,
+so the remaining saving comes from Stage C.
 
 ## Order
 
 ```
 Stage 0 safety net ── C delete ──┬── 5 simulator seam ── 6 policy seam ── 7 split rollout ── 8 thin pipeline
                                  │                                        └─ recovery runner can start here
-                                 └── 1 corpus reader ── 2 typed episodes ── 3 signal registry ── 4 config + constants
+                                 └── 1 corpus reader ── 2 typed episodes ── 4 config + constants
 ```
+
+There was a Stage 3, a guard signal registry. It was dropped: with one live signal there
+is nothing to register.
 
 The two tracks share only `schema.py` and `config.py`, so they can interleave.
 **Recommended order for one person:** 0 → C → 5 → 6 → 7, build the recovery runner,
-then 1 → 2 → 3 → 4 → 8. The recording track comes first because recovery depends on it,
-and the analysis track is lower risk once the safety net exists.
+then 1 → 2 → 4 → 8. The recording track comes first because recovery depends on it.
 
 "Touched" is how many lines a stage moves or edits, which is the review size. "Net"
 is the estimated change in code lines for `src/` plus `scripts/` once the stage is done.
@@ -77,34 +79,31 @@ is the estimated change in code lines for `src/` plus `scripts/` once the stage 
 | Stage | What | Effort | Touched | Net (src+scripts) | Risk |
 |---|---|---|---|---|---|
 | 0 | Golden digests, snapshot, import-layer test | S | 250 | ~0 (tests +250) | low |
-| C | Delete dead code, obsolete scripts, script duplication | M | 900 | **−700 to −800** | low |
+| C | Delete obsolete scripts and the last duplication | S | 350 | **about −250** | low |
 | 5 | Simulator seam + `PerturbationBase` | M | 250 | −20 | medium |
 | 6 | Policy seam: `ChunkPolicy`, `Processors`, `policy/smolvla.py` | M | 250 | −40 | medium |
 | 7 | Split `_rollout_one` into obs / decide / sink | L | 350 | **+40** | **high** |
 | 8 | Thin `run_pipeline` | S | 120 | −10 | low |
-| 1 | `backstop/corpus/` reader | M | 300 | −60 | low–medium |
-| 2 | Typed `EpisodeKey` + `TraceRow` | M | 350 | −40 | medium |
-| 3 | Guard signal registry | M | 200 | −20 | medium |
-| 4 | Paths/guard config + shared constants | S–M | 250 | −60 | low |
-| | **Total** | | ~3,200 | **about −950** | |
+| 1 | `backstop/corpus/` reader | M | 250 | −50 | low–medium |
+| 2 | Typed `EpisodeKey` + `TraceRow` | S–M | 200 | −30 | medium |
+| 4 | Paths/guard config + shared constants | S | 150 | −40 | low |
+| | **Total** | | ~2,200 | **about −400** | |
 
 Stage 7 is the one stage expected to grow. Replacing 18 keyword arguments with two small
 dataclasses, and one long function with four named pieces, costs a few lines. That's the
 price of making the recovery runner a reuse instead of a copy.
 
-## Stage C: delete first
+## Stage C: delete the rest
 
-Each deletion was checked for callers on 2026-10-18. Git history keeps everything.
+Each item was checked for callers on 2026-10-18. Git history keeps everything.
 
 | What | Why it can go | Code lines |
 |---|---|---|
-| `scripts/calibration_sweep.py`, `scripts/record_corpus_a_continuous_families.sh` | One-off Week-2 tools, referenced from nowhere (README, docs, justfile, tests, CI) | ~200 |
-| `guard/vision.py` `absence_scores` + `_pooled` | No callers. `evaluate_presence.py` has its own CLIP path | ~70 |
-| `guard/summarize.py` copy-paste | `report_signal`/`report_trust_head` and the two cross-validation blocks build the same dicts. One `_metrics_block` helper | ~80 |
-| Script clusters A–G | Trust-head fitting ×4, hand-printed rule lines ×3, the frozen object-suite loop ×3, the internal-distance fit ×2, per-step series ×2, the PASS/FAIL harness ×2, HTTP JSON helpers ×2. Each becomes one library function, or a shared base for the two viewers | ~250 |
-| `guard_viewer.py` ↔ `review_server.py` | A shared HTTP handler base replaces the borrowed private methods | ~50 |
-| History-diary prose | 59 "Week N / day 1" references in code. The history is already in ADRs and git; keep the *why*, cut the *when*. Prose isn't counted in the net figure above, but files get shorter | (prose) |
-| Small leftovers | `_reduce` alias, the unused `CONTROL_FPS` in `review_server.py`, the orphan comments | ~20 |
+| `scripts/calibration_sweep.py`, `scripts/record_corpus_a_continuous_families.sh` | One-off Week-2 tools, referenced from nowhere (README, docs, justfile, tests, CI) | ~170 |
+| `guard_viewer.py` ↔ `review_server.py` | A shared HTTP handler base replaces the borrowed private methods and the duplicated JSON helpers | ~50 |
+| `verify_corpus.py` ↔ `verify_sim_state_roundtrip.py` | The same PASS/FAIL check harness, twice | ~20 |
+| History-diary prose | "Week N / day 1" references in code. The history is already in ADRs and git; keep the *why*, cut the *when*. Prose isn't counted in the net figure, but files get shorter | (prose) |
+| Small leftovers | The unused `CONTROL_FPS` in `review_server.py`, orphan comments | ~10 |
 
 **Verify:** the analysis snapshot is byte-identical. Deleting the two obsolete scripts
 needs your explicit OK in the stage's review.
@@ -249,8 +248,8 @@ The recovery runner can then reuse the pieces instead of copying the loop.
   - `iter_episode_columns(dataset_root, columns)`, one episode at a time, with a
     contiguity check
 - `corpus/privileged.py`: the npz *reader* moves here. The writer stays in `record/`.
-- **Callers:** `guard/extract.py`, `guard/vision.py`, `label/extract.py` and five
-  scripts switch over, with no re-export shims. `label/extract.py` keeps only row
+- **Callers:** `guard/extract.py`, `guard/vision.py`, `label/extract.py` and three
+  scripts (`auto_label`, `evaluate_presence`, `review_server`) switch over, with no re-export shims. `label/extract.py` keeps only row
   building and merging.
 - **Byte risk:** `perturbation_strength` comes back as a float from the typed model.
   First confirm every `run.json` on disk already stores floats (`build_provenance`
@@ -280,25 +279,6 @@ The recovery runner can then reuse the pieces instead of copying the loop.
 - **Stop rule:** if a script needs more than about 30 lines of adapters, leave it on raw
   rows with a TODO.
 
-## Stage 3: guard signal registry
-
-**Plain version:** each signal is declared once, with what it reads and where it's used.
-Today a signal has to be added by hand to six separate lists.
-
-- `guard/registry.py`:
-  - `SignalSpec(name, source, per_step, in_trace, in_trust, in_step_model)`, where
-    `source` is one of samples / chunk / state_action / frames / external / derived.
-  - One ordered `SIGNALS` tuple.
-- **Derived from it:**
-  - `PARQUET_SIGNALS`, `TRACE_SIGNALS`, `TRUST_FEATURES`, `STEP_SIGNALS`
-  - the per-step dict in `load_shard_signals`
-  - `load_chunk_series`
-  - `trust_running`'s special case in `series_map`
-- **Pin test:** each derived tuple equals today's literal tuple, *in order*. Order drives
-  trust-head weights, frozen rules and the key order in `traces.jsonl`.
-- **Not a plugin system:** signals are still plain functions in `guard/signals.py`.
-- **Verify:** snapshot identical, especially `artifacts/guard/frozen/*` and `traces.jsonl`.
-
 ## Stage 4: paths/guard config and shared constants
 
 - `config.py` gains `CorpusPaths` (dataset roots, traces, labels) and
@@ -307,9 +287,8 @@ Today a signal has to be added by hand to six separate lists.
     file is added.
   - The budget always comes from `configs/metric.yaml` via `load_metric_contract`,
     never a literal.
-- `guard/cli.py: add_guard_args(parser)` sets the shared argparse defaults. A
-  script-specific override (e.g. `evaluate_object_line`'s 0.5) stays visible in that
-  script.
+- `guard/cli.py: add_guard_args(parser)` sets the shared argparse defaults. Any
+  script-specific override stays visible in that script.
 - `schema.py` gains `CONTROL_FPS`, `GRIPPER_INDEX`, `EEF_POS` and `GRIPPER_QPOS`. These
   replace the copies in `guard/traces.py`, `guard/signals.py`, `label/signals.py`,
   `recover/*`, `review_server.py` and `verify_corpus.py`.

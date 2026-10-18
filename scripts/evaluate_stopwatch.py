@@ -10,17 +10,19 @@ trust:
    an earlier stop is possible at all, before any threshold is chosen.
 2. Perturbation, not failure: do perturbed runs that succeed score like
    clean successes, while failures in the same family score higher?
-3. Budget drift: the persistence rules in `evaluate_persistence.py` are
-   searched on the calibration half and the trust head is fit on the same
-   successes that set its line. Over 20 random splits, how often does the
-   held-out false-stop rate go above 5%?
+3. The clock alone, over 20 random splits: how often does its held-out
+   false-stop rate go above the budget?
 4. Signal OR stopwatch (`backstop.guard.stopwatch`), set from good runs
    only, over the same 20 splits, and on the object suite recalibrated from
    n good object runs with no object failure used.
 
+The comparison rules this script used to report beside the headline
+(temporal consistency, the trust head, searched persistence rules) are in
+docs/experiments.md.
+
 Onset ranges are read only to report lead time. Nothing is fit on them.
 
-    PYTHONPATH=src python scripts/evaluate_stopwatch.py
+    uv run python scripts/evaluate_stopwatch.py
 """
 
 from __future__ import annotations
@@ -33,11 +35,7 @@ from pathlib import Path
 import numpy as np
 
 from backstop.eval.report import write_guard_report
-from backstop.guard.calibrate import calibrate_threshold
-from backstop.guard.combine import TRUST_FEATURES, apply_trust_head, fit_trust_head
-from backstop.guard.persist import first_persistent_step, select_persistence_rule
 from backstop.guard.scoring import auroc, fit_stopwatch_from_rows
-from backstop.guard.split import stratified_kfold
 from backstop.guard.stopwatch import StopwatchRule, stop_step
 from backstop.guard.traces import (
     FPS,
@@ -55,10 +53,10 @@ from backstop.guard.traces import (
 from backstop.schema import HEADLINE_METRIC, load_metric_contract
 
 # ADR-005: the headline guard. The simplest one: a single signal, nothing
-# learned, and the first signal built (ADR-004). The other OR rules are
-# reported beside it, never instead of it.
-HEADLINE_GUARD = "action_chunk_disagreement OR stopwatch"
-SIGNALS = ("action_chunk_disagreement", "temporal_self_consistency", "progress_monitoring")
+# learned, and the first signal built (ADR-004).
+SIGNAL = "action_chunk_disagreement"
+HEADLINE_GUARD = f"{SIGNAL} OR stopwatch"
+SIGNALS = (SIGNAL,)
 
 
 def _scores(row: Row) -> dict[str, float]:
@@ -67,32 +65,6 @@ def _scores(row: Row) -> dict[str, float]:
 
 def _per_step(row: Row, name: str) -> np.ndarray:
     return np.asarray(row["per_step"][name], dtype=np.float64)  # type: ignore[index]
-
-
-def _head(rows: list[Row]) -> object:
-    features = np.array([[_scores(row)[name] for name in TRUST_FEATURES] for row in rows])
-    failure = np.array([0.0 if row["success"] else 1.0 for row in rows])
-    return fit_trust_head(features, failure, TRUST_FEATURES)
-
-
-def _trust(head: object, rows: list[Row]) -> np.ndarray:
-    features = np.array([[_scores(row)[name] for name in TRUST_FEATURES] for row in rows])
-    return apply_trust_head(head, features)  # type: ignore[arg-type]
-
-
-def _cross_fit_trust(
-    calibration: list[Row], eval_eps: list[Row]
-) -> dict[tuple[str, int], np.ndarray]:
-    """Running trust where no calibration run is scored by a head that saw it."""
-    keys = [(*episode_key(row), bool(row["success"])) for row in calibration]
-    by_key = {episode_key(row): row for row in calibration}
-    series: dict[tuple[str, int], np.ndarray] = {}
-    for fold in stratified_kfold(keys, n_folds=5, seed=0):
-        held = {(key.shard, key.episode_index) for key in fold.eval}
-        train = [row for row in calibration if episode_key(row) not in held]
-        series.update(series_map([by_key[key] for key in held], "trust_running", _head(train)))
-    series.update(series_map(eval_eps, "trust_running", _head(calibration)))
-    return series
 
 
 def separability(spatial: list[Row]) -> list[dict[str, float]]:
@@ -198,48 +170,11 @@ def budget_drift(
     eval_fraction: float,
     budget: float,
 ) -> dict[str, dict[str, float]]:
-    """The report's own searched rules, and signal OR stopwatch, over many splits."""
+    """The clock alone, and signal OR stopwatch, over many paired splits."""
     runs: dict[str, list[dict[str, float]]] = {}
     for seed in range(seeds):
         calibration, eval_eps = split_halves(pooled, eval_fraction=eval_fraction, seed=seed)
-        head = _head(calibration)
-        series = {
-            "action_chunk_disagreement": series_map(
-                calibration + eval_eps, "action_chunk_disagreement", None
-            ),
-            "temporal_self_consistency": series_map(
-                calibration + eval_eps, "temporal_self_consistency", None
-            ),
-            "trust_running": series_map(calibration + eval_eps, "trust_running", head),
-        }
-        # The top table of docs/evaluation.md: episode-level trust, one crossing.
-        line = calibrate_threshold(_trust(head, [r for r in calibration if r["success"]]), budget)
-        good = [row for row in eval_eps if row["success"]]
-        bad = [row for row in eval_eps if not row["success"]]
-        runs.setdefault("trust_head single crossing (as reported)", []).append(
-            {
-                "false_stop_rate": float((_trust(head, good) >= line).mean()),
-                "detection_rate": float((_trust(head, bad) >= line).mean()),
-            }
-        )
-        for name in ("action_chunk_disagreement", "trust_running"):
-            pairs = [(series[name][episode_key(row)], bool(row["success"])) for row in calibration]
-            rule = select_persistence_rule(pairs, budget=budget)
-            good = [row for row in eval_eps if row["success"]]
-            bad = [row for row in eval_eps if not row["success"]]
-            flagged = [
-                first_persistent_step(series[name][episode_key(row)], rule.threshold, rule.hold)
-                for row in eval_eps
-            ]
-            flag_of = {episode_key(row): flag for row, flag in zip(eval_eps, flagged, strict=True)}
-            runs.setdefault(f"{name} persistence (searched, as reported)", []).append(
-                {
-                    "false_stop_rate": sum(flag_of[episode_key(r)] is not None for r in good)
-                    / len(good),
-                    "detection_rate": sum(flag_of[episode_key(r)] is not None for r in bad)
-                    / len(bad),
-                }
-            )
+        series = series_map(calibration + eval_eps, SIGNAL)
         clock_only = {
             episode_key(row): np.full(as_int(row["n_steps"]), -np.inf)
             for row in calibration + eval_eps
@@ -256,17 +191,11 @@ def budget_drift(
         )
         clock_run = _apply(eval_eps, clock_only, clock_rule, labels)
         runs.setdefault("stopwatch only", []).append(clock_run)
-        series["trust_running (cross-fit)"] = _cross_fit_trust(calibration, eval_eps)
-        for name in (
-            "action_chunk_disagreement",
-            "temporal_self_consistency",
-            "trust_running (cross-fit)",
-        ):
-            rule = fit_stopwatch_from_rows(calibration, series[name], budget)
-            run = _apply(eval_eps, series[name], rule, labels)
-            # ADR-005 headline: paired with the clock on the same split.
-            run["saved_over_stopwatch"] = clock_run["mean_stop_step"] - run["mean_stop_step"]
-            runs.setdefault(f"{name} OR stopwatch", []).append(run)
+        rule = fit_stopwatch_from_rows(calibration, series, budget)
+        run = _apply(eval_eps, series, rule, labels)
+        # ADR-005 headline: paired with the clock on the same split.
+        run["saved_over_stopwatch"] = clock_run["mean_stop_step"] - run["mean_stop_step"]
+        runs.setdefault(HEADLINE_GUARD, []).append(run)
     return {name: _summary(values, budget) for name, values in runs.items()}
 
 
@@ -282,10 +211,10 @@ def object_recalibration(
     bad = [row for row in obj if not row["success"]]
     out: dict[str, object] = {}
     rng = np.random.default_rng(0)
-    for name in ("action_chunk_disagreement", "temporal_self_consistency"):
-        spatial_series = series_map(pooled, name, None)
+    for name in SIGNALS:
+        spatial_series = series_map(pooled, name)
         frozen = fit_stopwatch_from_rows(pooled, spatial_series, budget)
-        series = series_map(obj, name, None)
+        series = series_map(obj, name)
         entry: dict[str, object] = {"frozen_spatial_rule": _apply(obj, series, frozen, labels)}
         for n in (10, 20, 30, 40, 50):
             runs = []

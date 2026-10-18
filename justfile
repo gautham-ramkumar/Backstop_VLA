@@ -49,17 +49,11 @@ verify-baseline:
 	  --artifacts artifacts/eval/spatial_baseline \
 	  --dataset data/lerobot/backstop_spatial_baseline
 
-# Offline guard reports from artifacts/guard/traces.jsonl (CPU, about a minute).
-# evaluate_guard.py (writes the traces) and evaluate_presence.py (GPU detector)
-# are left out on purpose: they are the slow, expensive ones.
+# The guard's reports, in order: traces and the single-split report, then the
+# headline against the stopwatch. evaluate_presence.py (GPU detector) is separate.
 guard-reports:
-	uv run python scripts/evaluate_persistence.py
+	uv run python scripts/evaluate_guard.py
 	uv run python scripts/evaluate_stopwatch.py
-	uv run python scripts/evaluate_early.py
-	uv run python scripts/evaluate_object_line.py
-	uv run python scripts/evaluate_target_motion.py
-	uv run python scripts/evaluate_internal.py
-	uv run python scripts/train_step_model.py
 
 # Recovery: freeze the headline guard (5% and 20%), held out from the clean shard.
 freeze-guard:

@@ -54,9 +54,10 @@ corpus A, held-out half, 20 random splits. Details in [evaluation](docs/evaluati
 
 **Why a stopwatch is the baseline.** Every failure in the corpus stalls until the
 280-step cap, and good runs finish by about step 130. So "stop anything still running
-at step 132" already catches every failure inside the budget. The trust head, which
-the original plan made the headline, catches 34 of 41 held-out failures. On failures
-caught, the guard barely beats a timer. What it adds is time.
+at step 132" already catches every failure inside the budget. The learned trust head,
+which the original plan made the headline, caught 34 of 41 held-out failures and saved
+less time than the single disagreement signal. On failures caught, the guard barely
+beats a timer. What it adds is time.
 
 **What that says about the hypothesis.** The signals do carry information: by the end of a
 run they separate failures from good runs well (about 0.8–0.9, where 0.5 is a coin flip), and perturbed runs that succeed score like
@@ -131,10 +132,15 @@ engineering convenience.
 | Signal | What it detects | Result |
 |---|---|---|
 | Action-chunk disagreement | Sample the policy K times under different flow noise; high spread means no confident opinion about what to do next | Carries signal. Headline guard. |
-| Temporal self-consistency | Chunks from successive timesteps overlap; disagreement in the overlap means the policy is changing its mind mid-motion | Carries signal, about as much as disagreement |
+| Temporal self-consistency | Chunks from successive timesteps overlap; disagreement in the overlap means the policy is changing its mind mid-motion | A tie with disagreement, not simpler. Archived. |
 | Visual precondition check | Verify the instructed object is actually present before committing | Works as a per-object detector gate (OWLv2) when its references come from the same scenes: stops 28 of 30 missing-object runs at step 0. Lines do not carry over to new layouts. |
-| Progress monitoring | Compare predicted against observed state change | Weak |
-| Trust head | Logistic combination of the action-stream signals | Catches the most failures on its own, but as a guard OR stopwatch it saves less time than disagreement alone (0.47 s vs 0.67 s). Combines the three action-stream signals; the visual check is a separate gate |
+| Progress monitoring | Compare predicted against observed state change | Weak. Archived. |
+| Trust head | Logistic combination of the action-stream signals | Catches the most failures on its own, but as a guard OR stopwatch it saves less time than disagreement alone (0.47 s vs 0.67 s). Combines the three action-stream signals; the visual check is a separate gate. Archived. |
+
+Persistence rules, signals from recent papers, the model's own activations, a per-step
+model and the privileged cup position were tried too. Every archived experiment is
+written up in [experiments](docs/experiments.md), with its code at the git tag
+`research-archive-2026-10`.
 
 Each was evaluated on its own before any combination. The per-signal ablation matters
 as much as the combined number, because it says which signal is doing the work.
@@ -238,7 +244,9 @@ VLA failure modes is a genuine contribution even if the guard does not work.
 ## Documentation
 
 - [Runbook](docs/runbook.md) — commands, tolerances, machine setup
-- [Evaluation](docs/evaluation.md) — every guard result, with commands to reproduce it
+- [Evaluation](docs/evaluation.md) — the guard's results, with commands to reproduce them
+- [Experiments](docs/experiments.md) — every signal and rule we tried, what it scored, and why it lost
+- [Refactor plan](docs/refactor_plan.md) — staged clean-up of the code structure
 - [ADR-001](docs/adr/001-metric.md) — the 5% false-stop budget
 - [ADR-005](docs/adr/005-headline-vs-stopwatch.md) — why the headline is time saved over a stopwatch
 - [ADR-002](docs/adr/002-checkpoint.md) — why SmolVLA over OpenVLA-7B, and the locked recipe

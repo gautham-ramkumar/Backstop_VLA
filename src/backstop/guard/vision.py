@@ -1,18 +1,14 @@
-"""Visual precondition: is the instructed object in the agentview?
+"""Detector scores for the presence gate: is the instructed object in view?
 
-CLIP embeds the first frame of an episode and the object phrase from the
-instruction (`signals.instructed_object_phrase`). The guard score is the
-negated cosine similarity (`signals.visual_precondition`): higher means the
-object looks absent. One frame per episode, because a precondition is a
-property of the scene the arm is about to act in, not of a later step.
+`detector_scores` and `detector_score_matrix` score the first agentview frame
+of an episode with an open-vocabulary detector (OWLv2) for an object name.
+`backstop.guard.presence` turns those scores into a per-object gate. One frame
+per episode, because a precondition is a property of the scene the arm is
+about to act in, not of a later step.
 
-Privileged object poses are not read. Torch and the model weights are
-imported inside each call so unit tests of the other signals never load them.
-
-CLIP turned out not to work for this (docs/evaluation.md, "Visual
-precondition"): whole-frame similarity is not comparable across object names
-and the objects are small. `detector_scores` uses an open-vocabulary detector
-instead, and `backstop.guard.presence` gives each object its own line.
+Privileged object poses are not read. Torch and the model weights are imported
+inside each call, so importing this module never loads them. The CLIP and
+SmolVLM2 scores this replaced are recorded in docs/experiments.md.
 """
 
 from __future__ import annotations
@@ -24,24 +20,7 @@ import numpy as np
 
 from backstop.label.extract import load_episode_video_range
 
-CLIP_MODEL = "openai/clip-vit-base-patch32"
 DETECTOR_MODEL = "google/owlv2-base-patch16-ensemble"
-
-
-def _pooled(output: object):
-    """Newer transformers returns a pooled output object; older ones a tensor."""
-    import torch  # noqa: PLC0415
-
-    if torch.is_tensor(output):
-        return output
-    pooled = getattr(output, "pooler_output", None)
-    if pooled is None:
-        pooled = getattr(output, "text_embeds", None)
-    if pooled is None:
-        pooled = getattr(output, "image_embeds", None)
-    if not torch.is_tensor(pooled):
-        raise TypeError(f"CLIP features were {type(output).__name__}, not a tensor")
-    return pooled
 
 
 def first_agentview_frame(dataset_root: Path, episode_index: int) -> np.ndarray:
@@ -60,56 +39,6 @@ def first_agentview_frame(dataset_root: Path, episode_index: int) -> np.ndarray:
         raise RuntimeError(f"no frame at {start_s:.3f}s in {video_path}")
     finally:
         container.close()
-
-
-def absence_scores(images: list[np.ndarray], phrases: list[str]) -> np.ndarray:
-    """Negated CLIP cosine similarity, one score per image.
-
-    Text is encoded once per distinct phrase. Images are encoded in batches.
-    CUDA is used when it is available; otherwise CPU.
-    """
-    if len(images) != len(phrases):
-        raise ValueError(f"{len(images)} images and {len(phrases)} phrases")
-    if not images:
-        return np.zeros(0, dtype=np.float64)
-
-    import torch  # noqa: PLC0415
-    from transformers import CLIPModel, CLIPProcessor  # noqa: PLC0415
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    processor: Any = CLIPProcessor.from_pretrained(CLIP_MODEL)
-    loaded: Any = CLIPModel.from_pretrained(CLIP_MODEL)
-    model: Any = loaded.to(device)
-    model.eval()
-
-    unique = list(dict.fromkeys(phrases))
-    text_inputs = processor(
-        text=[f"a photo of a {phrase}" for phrase in unique],
-        return_tensors="pt",
-        padding=True,
-    )
-    text_inputs = {key: value.to(device) for key, value in text_inputs.items()}
-    with torch.no_grad():
-        text_features = _pooled(model.get_text_features(**text_inputs))
-        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-    text_index = {phrase: i for i, phrase in enumerate(unique)}
-
-    image_features: list[torch.Tensor] = []
-    batch_size = 32
-    for start in range(0, len(images), batch_size):
-        batch = images[start : start + batch_size]
-        image_inputs = processor(images=batch, return_tensors="pt")
-        image_inputs = {key: value.to(device) for key, value in image_inputs.items()}
-        with torch.no_grad():
-            features = _pooled(model.get_image_features(**image_inputs))
-            features = features / features.norm(dim=-1, keepdim=True)
-        image_features.append(features)
-    image_matrix = torch.cat(image_features, dim=0)
-
-    phrase_ids = torch.tensor([text_index[phrase] for phrase in phrases], device=device)
-    selected_text = text_features[phrase_ids]
-    similarity = (image_matrix * selected_text).sum(dim=-1)
-    return (-similarity).detach().cpu().numpy().astype(np.float64)
 
 
 def detector_score_matrix(images: list[np.ndarray], names: list[str]) -> np.ndarray:
