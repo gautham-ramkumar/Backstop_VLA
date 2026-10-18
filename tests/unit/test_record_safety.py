@@ -17,10 +17,9 @@ from typing import Any
 
 import pytest
 
-# `backstop.record.loop` imports numpy at module scope, and numpy reaches this
-# project through the `sim` extra. The CPU-only CI job must skip this module rather
-# than fail to collect it -- the `record-contract` job runs it with sim installed.
-pytest.importorskip("numpy")
+# `backstop.record.loop` imports `backstop.perturb`, whose wrapper needs gymnasium
+# from the `sim` extra. The CPU CI job skips this module; the sim job runs it.
+pytest.importorskip("gymnasium")
 
 from backstop.config import PipelineConfig  # noqa: E402
 from backstop.record import loop as record_loop  # noqa: E402
@@ -247,13 +246,13 @@ def test_an_unsharded_run_is_not_asked(tmp_path, fake_lerobot) -> None:
     assert n_done == 0
 
 
-def test_every_shipped_record_config_has_decided(tmp_path) -> None:
+def test_every_shipped_record_config_has_decided(tmp_path, repo_root) -> None:
     """The check is only worth having if the configs actually pass it.
 
     Loads each `configs/record/*.yaml` for real, so a shard config added later
     without the key fails here rather than at 2am on the GPU.
     """
-    configs = sorted(Path("configs/record").glob("*.yaml"))
+    configs = sorted((repo_root / "configs/record").glob("*.yaml"))
     assert configs, "no record configs found; this test is silently passing"
     for path in configs:
         cfg = PipelineConfig.from_yaml(path)

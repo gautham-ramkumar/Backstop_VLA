@@ -11,14 +11,11 @@ failure onset instead of replaying the whole episode.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
-pytest.importorskip("numpy")
-
-import numpy as np  # noqa: E402
-
-from backstop.record.privileged import PrivilegedWriter, load_episode  # noqa: E402
-from backstop.schema import lerobot_features  # noqa: E402
+from backstop.record.privileged import PrivilegedWriter, load_episode
+from backstop.schema import lerobot_features
 
 LIBERO_SPATIAL_STATE_DIM = 92
 

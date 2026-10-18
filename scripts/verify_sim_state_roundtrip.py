@@ -20,16 +20,17 @@ Exits non-zero if any check fails.
 from __future__ import annotations
 
 import argparse
-import sys
-from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-
-from backstop.config import EnvYamlConfig, EvalYamlConfig  # noqa: E402
-from backstop.env.libero import close_libero, make_libero_envs, restore_sim_state, sim_state  # noqa: E402
-from backstop.schema import ACTION_DIM  # noqa: E402
+from backstop.config import EnvYamlConfig, EvalYamlConfig
+from backstop.env.libero import (
+    close_libero,
+    make_libero_envs,
+    restore_sim_state,
+    sim_state,
+)
+from backstop.schema import ACTION_DIM
 
 _results: list[tuple[bool, str, str]] = []
 
@@ -56,7 +57,7 @@ def _synthetic_actions(n: int, seed: int) -> np.ndarray:
     restore changed nothing, and `goal_pos` turned out to be recomputed fresh
     from current `ee_pos` on every `set_goal()` call anyway, not carried over.
 
-    Smooth low-frequency motion with a held-open gripper -- closer to actual
+    Smooth low-frequency motion with the gripper held still -- closer to actual
     policy output and free of manufactured contact events -- round-trips to
     float noise (~1e-6). That is the case this test gates on, since it is the
     case the corpus actually contains. The chatter-induced transient is a real
@@ -71,7 +72,8 @@ def _synthetic_actions(n: int, seed: int) -> np.ndarray:
     actions = np.zeros((n, ACTION_DIM), dtype=np.float32)
     for i in range(6):
         actions[:, i] = 0.15 * np.sin(2 * np.pi * freqs[i] * t + phases[i])
-    actions[:, 6] = 1.0  # gripper held open: no chatter, matches the case being tested
+    # Gripper held closed (+1 closes, -1 opens): no chatter, the case being tested.
+    actions[:, 6] = 1.0
     return actions
 
 
@@ -113,17 +115,19 @@ def run(task: str, task_id: int, n_steps: int, branch_at: int, seed: int) -> Non
         # the actual claim docs/recovery.md needs: not just "restore looks right"
         # but "restore, then step, reproduces the branch deterministically."
         mismatches = []
-        for offset, t in enumerate(range(branch_at, n_steps - 1)):
+        for t in range(branch_at, n_steps - 1):
             vec_env.step(actions[t : t + 1])
             replayed = sim_state(vec_env)
             expected = states[t + 1]
             if not np.allclose(replayed, expected, atol=1e-4, rtol=0):
                 mismatches.append((t + 1, float(np.abs(replayed - expected).max())))
+        detail = f"{len(mismatches)}/{n_steps - branch_at - 1} steps diverged"
+        if mismatches:
+            detail += f"; first at step {mismatches[0][0]} (max diff {mismatches[0][1]:.3g})"
         check(
             not mismatches,
             "replayed trajectory from the branch matches the original, step for step",
-            f"{len(mismatches)}/{n_steps - branch_at - 1} steps diverged"
-            + (f"; first at step {mismatches[0][0]} (max diff {mismatches[0][1]:.3g})" if mismatches else ""),
+            detail,
         )
 
         # A restore must not merely resemble the target step; it must be

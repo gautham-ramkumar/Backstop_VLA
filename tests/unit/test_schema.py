@@ -43,8 +43,8 @@ def test_frame_record_rejects_non_hwc() -> None:
         )
 
 
-def test_metric_contract_from_yaml() -> None:
-    contract = load_metric_contract(Path("configs/metric.yaml"))
+def test_metric_contract_from_yaml(repo_root: Path) -> None:
+    contract = load_metric_contract(repo_root / "configs/metric.yaml")
     assert contract.false_stop_budget == DEFAULT_FALSE_STOP_BUDGET
     assert contract.headline_metric == HEADLINE_METRIC
     assert set(FORBIDDEN_HEADLINES) <= set(contract.forbidden_headlines)

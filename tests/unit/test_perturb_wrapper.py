@@ -19,12 +19,9 @@ from typing import Any
 
 import pytest
 
-# `backstop.perturb` imports numpy (via `families`/`base`) and gymnasium (via
-# `wrapper`), both of which arrive through the `sim` extra -- the CPU CI job
-# installs only `dev` and has neither. Guarding on numpy alone is the existing
-# convention (see tests/unit/test_perturb.py): if it is missing, gymnasium is
-# guaranteed to be missing too, so one importorskip covers both.
-pytest.importorskip("numpy")
+# `backstop.perturb.wrapper` imports gymnasium, which arrives with the `sim`
+# extra. The CPU CI job skips this module; the sim job runs it.
+pytest.importorskip("gymnasium")
 
 import gymnasium as gym  # noqa: E402
 

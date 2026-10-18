@@ -244,6 +244,8 @@ name = "backstop"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "numpy" },
+    { name = "pyarrow" },
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
@@ -263,9 +265,11 @@ sim = [
 
 [package.metadata]
 requires-dist = [
-    { name = "lerobot", extras = ["libero", "smolvla"], marker = "extra == 'sim'", specifier = ">=0.6.1,<0.7" },
+    { name = "lerobot", extras = ["libero", "smolvla"], marker = "extra == 'sim'", specifier = "==0.6.1" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = "==3.3.2" },
+    { name = "numpy", specifier = ">=2.2,<3" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.2" },
+    { name = "pyarrow", specifier = ">=15" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.400" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },

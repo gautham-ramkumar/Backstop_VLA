@@ -22,7 +22,8 @@ from typing import Any
 
 import pytest
 
-pytest.importorskip("numpy")
+# `backstop.perturb` imports its wrapper, which needs gymnasium (`sim` extra).
+pytest.importorskip("gymnasium")
 
 import numpy as np  # noqa: E402
 

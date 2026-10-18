@@ -1,10 +1,25 @@
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.0
+  # Ruff and pyright run from the project's own locked environment (`uv run`), so
+  # pre-commit can never drift from the versions CI uses. Needs `uv` on PATH.
+  - repo: local
     hooks:
       - id: ruff
-        args: [--fix]
+        name: ruff check
+        entry: uv run --frozen ruff check --fix
+        language: system
+        types: [python]
       - id: ruff-format
+        name: ruff format
+        entry: uv run --frozen ruff format
+        language: system
+        types: [python]
+      - id: pyright
+        name: pyright
+        entry: uv run --frozen pyright
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:

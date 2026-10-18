@@ -47,12 +47,9 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-
-from backstop.config import (  # noqa: E402
+from backstop.config import (
     EnvYamlConfig,
     EvalYamlConfig,
     PipelineConfig,
@@ -61,7 +58,7 @@ from backstop.config import (  # noqa: E402
     ToleranceConfig,
     WandbYamlConfig,
 )
-from backstop.eval.pipeline import run_pipeline  # noqa: E402
+from backstop.eval.pipeline import run_pipeline
 
 logger = logging.getLogger(__name__)
 

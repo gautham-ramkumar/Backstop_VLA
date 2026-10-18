@@ -6,19 +6,23 @@ export PYOPENGL_PLATFORM := "osmesa"
 export CMAKE_POLICY_VERSION_MINIMUM := "3.5"
 
 sync:
-	uv sync --extra dev --extra sim
+	uv sync --locked --extra dev --extra sim
 
 lint:
-	uv run ruff check src tests
-	uv run ruff format --check src tests
+	uv run ruff check src tests scripts
+	uv run ruff format --check src tests scripts
 	uv run pyright
 
 fmt:
-	uv run ruff check --fix src tests
-	uv run ruff format src tests
+	uv run ruff check --fix src tests scripts
+	uv run ruff format src tests scripts
 
 test:
 	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest
+
+# The whole suite with no skips allowed, as the CI `sim` job runs it.
+test-strict:
+	BACKSTOP_ALLOWED_SKIPS= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -rs
 
 smoke:
 	uv run backstop-eval --config configs/eval/spatial_smoke.yaml
@@ -44,3 +48,23 @@ verify-baseline:
 	uv run python scripts/verify_corpus.py \
 	  --artifacts artifacts/eval/spatial_baseline \
 	  --dataset data/lerobot/backstop_spatial_baseline
+
+# Offline guard reports from artifacts/guard/traces.jsonl (CPU, about a minute).
+# evaluate_guard.py (writes the traces) and evaluate_presence.py (GPU detector)
+# are left out on purpose: they are the slow, expensive ones.
+guard-reports:
+	uv run python scripts/evaluate_persistence.py
+	uv run python scripts/evaluate_stopwatch.py
+	uv run python scripts/evaluate_early.py
+	uv run python scripts/evaluate_object_line.py
+	uv run python scripts/evaluate_target_motion.py
+	uv run python scripts/evaluate_internal.py
+	uv run python scripts/train_step_model.py
+
+# Recovery: freeze the headline guard (5% and 20%), held out from the clean shard.
+freeze-guard:
+	uv run python scripts/freeze_guard.py
+
+# Recovery: does re-selecting a different sampled chunk have any headroom?
+pretest-reselect:
+	uv run python scripts/pretest_reselect.py

@@ -12,37 +12,42 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
-      - name: Install CPU extras (no sim / no GPU)
-        run: uv sync --extra dev
+      - name: Install core + dev (no sim / no GPU), exactly as locked
+        run: uv sync --locked --extra dev
       - name: Ruff
-        run: uv run ruff check src tests && uv run ruff format --check src tests
+        run: uv run ruff check src tests scripts && uv run ruff format --check src tests scripts
       - name: Pyright
         run: uv run pyright
       - name: Pytest
-        run: PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest
+        # Only these modules may skip here: they need the sim stack (torch,
+        # lerobot, gymnasium, libero) and run in the `sim` job. Any other skip
+        # fails the run (tests/conftest.py).
+        env:
+          BACKSTOP_ALLOWED_SKIPS: test_batched_sampling,test_rollout_loop,test_libero_config,test_perturb,test_perturb_wrapper,test_record_safety,test_cli,test_eval_pipeline
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: uv run pytest -rs
       - name: Metric lock
         run: |
           uv run python -c "from pathlib import Path; from backstop.schema import load_metric_contract, DEFAULT_FALSE_STOP_BUDGET; c=load_metric_contract(Path('configs/metric.yaml')); assert c.false_stop_budget==DEFAULT_FALSE_STOP_BUDGET"
 
-  rollout-contract:
-    # The rollout-loop tests need lerobot (CPU only -- no GPU, no MuJoCo, no weights).
-    # Without this job they silently `importorskip` and the loop stays untested in CI,
-    # which is how four wiring bugs shipped green in week 1.
+  sim:
+    # The whole suite with the sim stack installed (CPU torch; no GPU, no weights).
+    # No skip is allowed here: a test that skips for a missing dependency fails
+    # the run. That is how four wiring bugs shipped green in week 1, and how the
+    # guard tests went unrun until week 6.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
-      - name: Install with sim extras (CPU torch)
+      - name: Install with sim extras, exactly as locked
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
-        run: uv sync --extra dev --extra sim
-      - name: Rollout contract tests
-        run: |
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/unit/test_rollout_loop.py -v
-      - name: Fail if the contract tests were skipped
-        run: |
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/unit/test_rollout_loop.py \
-            -q --no-header -rs 2>&1 | tee /tmp/out
-          grep -q "skipped" /tmp/out && { echo "Contract tests SKIPPED -- lerobot missing"; exit 1; } || true
+        run: uv sync --locked --extra dev --extra sim
+      - name: Pytest, no skips allowed
+        env:
+          BACKSTOP_ALLOWED_SKIPS: ""
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          MUJOCO_GL: osmesa
+        run: uv run pytest -rs

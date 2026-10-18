@@ -44,7 +44,7 @@ from typing import Any
 # Reserved subtree. The benchmark records real frames -- `frame_write` is one of
 # the stages -- so it needs somewhere to put them that is not a corpus.
 BENCH_ROOT = Path("data/lerobot/_benchmark")
-REFERENCE_CSV = Path("docs/week1_reference.csv")
+REFERENCE_CSV = Path(__file__).resolve().parents[1] / "docs" / "week1_reference.csv"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -86,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").strip().split("\n")[0])
     parser.add_argument("--config", type=Path, default=Path("configs/eval/spatial_smoke.yaml"))
     parser.add_argument("--k", default="1,4", help="comma-separated k_samples values to measure")
     parser.add_argument("--episodes", type=int, default=3, help="measured episodes per K")
