@@ -8,6 +8,7 @@ from pathlib import Path
 
 from backstop.config import PipelineConfig
 from backstop.eval.pipeline import run_pipeline
+from backstop.eval.tolerance import cli_outcome
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,13 +31,10 @@ def main(argv: list[str] | None = None) -> int:
         cfg.record.enabled = True
     result = run_pipeline(cfg)
     print(f"success_rate={result['success_rate']:.3f} n={result['n_total']}")
-    if cfg.tolerance.enforce and result["success_rate"] < cfg.tolerance.min_success_rate:
-        print(
-            f"BELOW TOLERANCE. Retry with policy.num_steps={cfg.tolerance.fallback_num_steps} "
-            "(docs/adr/002-checkpoint.md)."
-        )
-        return 2
-    return 0
+    outcome = cli_outcome(result["success_rate"], result["in_tolerance"], cfg.tolerance)
+    if outcome.message:
+        print(outcome.message)
+    return outcome.exit_code
 
 
 if __name__ == "__main__":

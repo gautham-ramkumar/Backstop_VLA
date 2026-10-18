@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from backstop.env.libero import (
     make_libero_envs,
 )
 from backstop.eval.report import write_eval_report, write_failures_markdown, write_timing_report
+from backstop.eval.tolerance import tolerance_verdict
 from backstop.policy.adapter import SmolVLAAdapter
 from backstop.provenance import build_provenance
 from backstop.record.loop import create_dataset, run_episodes
@@ -23,17 +25,25 @@ from backstop.record.timing import StageTimer
 logger = logging.getLogger(__name__)
 
 
+def load_pinned_config(from_pretrained: Callable[..., Any], path: str, revision: str | None) -> Any:
+    """Load a policy config at exactly `revision`, or at HEAD only when none is pinned.
+
+    There is deliberately no fallback: if the loader rejects `revision`, the
+    error propagates. Retrying without it would load whatever the Hub repo
+    holds today while provenance still records the pin.
+    """
+    if revision:
+        return from_pretrained(path, revision=revision)
+    return from_pretrained(path)
+
+
 def load_lerobot_policy(cfg: PipelineConfig, env_cfg: Any) -> Any:
     from lerobot.configs import PreTrainedConfig  # noqa: PLC0415
     from lerobot.policies import make_policy, make_pre_post_processors  # noqa: PLC0415
 
-    load_kwargs: dict[str, Any] = {}
-    if cfg.policy.revision:
-        load_kwargs["revision"] = cfg.policy.revision
-    try:
-        policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy.path, **load_kwargs)
-    except TypeError:
-        policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy.path)
+    policy_cfg = load_pinned_config(
+        PreTrainedConfig.from_pretrained, cfg.policy.path, cfg.policy.revision
+    )
     # Declared as `Path | None`; lerobot only truth-tests it and forwards it as an
     # HF `pretrained_name_or_path`, so a Hub repo id round-trips through Path fine.
     policy_cfg.pretrained_path = Path(cfg.policy.path)
@@ -100,16 +110,10 @@ def run_pipeline(cfg: PipelineConfig, timer: StageTimer | None = None) -> dict[s
     finally:
         close_libero(envs)
 
-    # A resumed run measured only the tail of the shard. Judging that partial rate
-    # against the band would either pass a broken run or fail a good one; verify the
-    # completed shard with scripts/verify_corpus.py instead.
-    in_tol: bool | None = (
-        None
-        if stats.get("partial")
-        else cfg.tolerance.min_success_rate
-        <= stats["success_rate"]
-        <= cfg.tolerance.max_success_rate
+    in_tol = tolerance_verdict(
+        stats["success_rate"], partial=bool(stats.get("partial")), tol=cfg.tolerance
     )
+    stats["in_tolerance"] = in_tol
     provenance = build_provenance(
         cfg,
         output_dir=output_dir,

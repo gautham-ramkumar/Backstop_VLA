@@ -8,6 +8,7 @@ from pathlib import Path
 
 from backstop.config import PipelineConfig
 from backstop.eval.pipeline import run_pipeline
+from backstop.eval.tolerance import cli_outcome
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,17 +28,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"success_rate={rate:.3f} n={result['n_total']} dataset={cfg.record.root}")
     # Recording is also the baseline pass: with K=1 and seeded noise the trajectory
     # is identical whether or not the dataset is written, so one run yields both the
-    # reproduced number and the corpus. Report tolerance here as `backstop-eval` does.
-    lo, hi = cfg.tolerance.min_success_rate, cfg.tolerance.max_success_rate
-    if not lo <= rate <= hi:
-        print(f"OUT OF TOLERANCE [{lo}, {hi}].")
-        if rate < lo:
-            print(
-                f"Retry with policy.num_steps={cfg.tolerance.fallback_num_steps} "
-                "(docs/adr/002-checkpoint.md)."
-            )
-        return 2
-    return 0
+    # reproduced number and the corpus. Tolerance is judged once, in the pipeline.
+    outcome = cli_outcome(rate, result["in_tolerance"], cfg.tolerance)
+    if outcome.message:
+        print(outcome.message)
+    return outcome.exit_code
 
 
 if __name__ == "__main__":

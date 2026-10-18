@@ -28,7 +28,7 @@ from lerobot.envs.configs import LiberoEnv  # noqa: E402
 
 from backstop.config import PipelineConfig  # noqa: E402
 from backstop.policy.adapter import SmolVLAAdapter  # noqa: E402
-from backstop.record.loop import run_episodes  # noqa: E402
+from backstop.record.loop import UnnormalizeError, _unnormalize_array, run_episodes  # noqa: E402
 from backstop.schema import ACTION_DIM, CHUNK_SIZE, STATE_DIM  # noqa: E402
 
 IMAGE_HW = 16
@@ -404,3 +404,23 @@ def test_sampling_leaves_no_trace_on_the_executed_chunk(rollout) -> None:
             rtol=1e-5,
             err_msg=f"stored chunk is not the executed one at step {step}",
         )
+
+
+def test_a_failing_unnormalize_stops_the_run_instead_of_storing_policy_space() -> None:
+    """It used to log a warning and return the chunk unconverted, which quietly
+    made the corpus unusable for chunk-based signals."""
+
+    def broken_post(action: Any) -> Any:
+        raise RuntimeError("stats missing for 'action'")
+
+    chunk = np.zeros((4, CHUNK_SIZE, ACTION_DIM), dtype=np.float32)
+    with pytest.raises(UnnormalizeError, match="policy space") as raised:
+        _unnormalize_array(broken_post, chunk)
+    assert isinstance(raised.value.__cause__, RuntimeError)
+
+
+def test_unnormalize_applies_the_postprocessor_to_every_sample() -> None:
+    chunk = np.ones((4, CHUNK_SIZE, ACTION_DIM), dtype=np.float32)
+    out = _unnormalize_array(SpyPostprocessor(), chunk)
+    assert out.shape == chunk.shape
+    np.testing.assert_allclose(out, chunk * POST_SCALE)

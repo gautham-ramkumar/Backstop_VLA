@@ -487,18 +487,22 @@ def _read_success(info: dict[str, Any], current: bool) -> bool:
     return False
 
 
+class UnnormalizeError(RuntimeError):
+    """The postprocessor could not map a chunk from policy space to env space."""
+
+
 def _unnormalize_array(post: Any, array: np.ndarray) -> np.ndarray:
     """Policy-space → env-space using the LeRobot postprocessor.
 
-    On failure this returns the array unchanged, which leaves the stored chunk in
-    policy space while the executed action is in env space -- the two silently
-    stop being comparable. That is unrecoverable after the fact, so make the
-    fallback loud. `verify_corpus.py` catches it too, by asserting
-    `action == action_chunk[0]`.
+    A failure raises `UnnormalizeError` and stops the recording. Carrying on
+    would store chunks in policy space next to executed actions in env space,
+    so the two stop being comparable, and that cannot be repaired after the
+    fact. `verify_corpus.py` checks the same thing on a finished corpus, by
+    asserting `action == action_chunk[0]`.
     """
-    try:
-        import torch  # noqa: PLC0415
+    import torch  # noqa: PLC0415
 
+    try:
         tensor = torch.from_numpy(np.asarray(array, dtype=np.float32))
         if tensor.ndim == 3:
             k, t, a = tensor.shape
@@ -507,15 +511,11 @@ def _unnormalize_array(post: Any, array: np.ndarray) -> np.ndarray:
         out = post(tensor)
         return np.asarray(_as_numpy(out), dtype=np.float32).reshape(array.shape)
     except (TypeError, ValueError, RuntimeError, AttributeError) as exc:
-        logger.warning(
-            "UNNORMALIZE FAILED on shape %s (%s: %s). Stored chunks are in POLICY "
-            "space while executed actions are in ENV space -- this corpus is not "
-            "usable for chunk-based signals. Fix before recording further.",
-            np.shape(array),
-            type(exc).__name__,
-            exc,
-        )
-        return np.asarray(array, dtype=np.float32)
+        raise UnnormalizeError(
+            f"unnormalize failed on shape {np.shape(array)} ({type(exc).__name__}: {exc}). "
+            "Stored chunks would be in policy space while executed actions are in env "
+            "space, which makes the corpus unusable for chunk-based signals."
+        ) from exc
 
 
 def _as_numpy(value: Any) -> np.ndarray:
