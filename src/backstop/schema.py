@@ -1,7 +1,8 @@
 """Frozen week-1 data contracts.
 
 These models are the source of truth for recorded episodes and for the
-headline metric. Changing field names or the false-stop budget requires an ADR.
+headline metric. Changing field names, the headline, or the false-stop budget
+requires an ADR (ADR-001 set the budget; ADR-005 set the current headline).
 """
 
 from __future__ import annotations
@@ -17,7 +18,10 @@ STATE_DIM = 8
 CHUNK_SIZE = 50
 
 FORBIDDEN_HEADLINES = frozenset({"accuracy", "raw_accuracy", "success_rate"})
-HEADLINE_METRIC = "detection_at_false_stop"
+# ADR-005: mean stop step saved over a stopwatch, both held to the same budget.
+HEADLINE_METRIC = "stop_time_saved_at_false_stop"
+# ADR-001's headline, kept as a secondary metric under ADR-005.
+DETECTION_METRIC = "detection_at_false_stop"
 DEFAULT_FALSE_STOP_BUDGET = 0.05
 
 
@@ -78,7 +82,7 @@ class RunProvenance(BaseModel):
 
 class MetricContract(BaseModel):
     false_stop_budget: float = Field(gt=0.0, lt=1.0)
-    headline_metric: Literal["detection_at_false_stop"] = HEADLINE_METRIC
+    headline_metric: Literal["stop_time_saved_at_false_stop"] = HEADLINE_METRIC
     forbidden_headlines: list[str] = Field(default_factory=lambda: sorted(FORBIDDEN_HEADLINES))
     secondary_metrics: list[str] = Field(default_factory=list)
 
@@ -88,7 +92,7 @@ class MetricContract(BaseModel):
         if value in FORBIDDEN_HEADLINES:
             raise ValueError(
                 f"headline_metric {value!r} is forbidden; use {HEADLINE_METRIC} "
-                "(see docs/adr/001-metric.md)"
+                "(see docs/adr/005-headline-vs-stopwatch.md)"
             )
         return value
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -229,3 +230,31 @@ def restore_sim_state(vec_env: Any, state: Any, index: int = 0) -> Any:
     new code path. Returns the raw LIBERO observation dict, not a LeRobot one.
     """
     return libero_control_env(vec_env, index).regenerate_obs_from_state(state)
+
+
+# BDDL class names whose plain name is not the snake case spelled out.
+OBJECT_NAMES: dict[str, str] = {
+    "akita_black_bowl": "black bowl",
+    "glazed_rim_porcelain_ramekin": "ramekin",
+    "cookies": "cookie box",
+    "chefmate_8_frypan": "frying pan",
+    "new_salad_dressing": "salad dressing",
+}
+
+
+def scene_objects(suite: str, task_id: int) -> tuple[str, list[str]]:
+    """Task language and the plain names of its BDDL objects."""
+    import libero.libero as libero_pkg  # noqa: PLC0415
+    from libero.libero.benchmark import get_benchmark  # noqa: PLC0415
+
+    task = get_benchmark(suite)().get_task(task_id)
+    root = Path(libero_pkg.__file__).parent / "bddl_files" / task.problem_folder
+    text = (root / task.bddl_file).read_text()
+    block = re.search(r"\(:objects(.*?)\)", text, re.S)
+    if block is None:
+        raise ValueError(f"no :objects block in {task.bddl_file}")
+    names: list[str] = sorted(set(re.findall(r"- (\w+)", block.group(1))))
+    plain = [
+        OBJECT_NAMES[name] if name in OBJECT_NAMES else name.replace("_", " ") for name in names
+    ]
+    return str(task.language), plain

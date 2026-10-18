@@ -1,6 +1,6 @@
 # ADR-001: Headline metric is detection at a 5% false-stop budget
 
-- Status: Accepted
+- Status: Accepted. Superseded in part by [ADR-005](005-headline-vs-stopwatch.md): the headline is now time saved over a stopwatch at the same 5% budget; detection at 5% is a secondary metric. The budget is unchanged.
 - Date: 2026-09-01
 - Week: 1
 

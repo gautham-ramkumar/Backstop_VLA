@@ -1,11 +1,15 @@
-# Locked in week 1 before any guard number exists. Changing this value
-# requires a new ADR, not a silent edit. See docs/adr/001-metric.md.
+# Budget locked in week 1 (docs/adr/001-metric.md). Headline changed in week 6
+# by docs/adr/005-headline-vs-stopwatch.md. Changing either requires a new ADR,
+# not a silent edit.
 false_stop_budget: 0.05
-headline_metric: detection_at_false_stop
+headline_metric: stop_time_saved_at_false_stop
 forbidden_headlines:
   - accuracy
   - raw_accuracy
   - success_rate
 secondary_metrics:
+  - detection_at_false_stop
+  - signal_first_fraction
+  - false_stop_rate_over_splits
   - mean_lead_time_steps
   - detection_curve

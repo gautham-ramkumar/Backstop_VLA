@@ -1,0 +1,53 @@
+# Week-4 held-out suite: LIBERO-Object, clean, K=4.
+#
+# The guard was designed, calibrated and trained on libero_spatial only. This
+# shard is never used to pick a threshold or fit the trust head; it is scored
+# with the frozen spatial calibration and reported as the unseen-suite number.
+#
+# Policy/env recipe is identical to configs/record/spatial_clean_k4.yaml apart
+# from `env.task`, so any difference is the suite, not the setup.
+#
+# `shard: object_clean`, not `clean`: data/privileged/clean already holds the
+# spatial clean arm, and privileged sidecars are keyed by shard name.
+seed: 0
+output_dir: artifacts/eval/object_clean_k4
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 10
+env:
+  type: libero
+  task: libero_object
+  task_ids: null
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 10
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 4
+  repo_id: local/backstop_object_clean_k4
+  root: data/lerobot/backstop_object_clean_k4
+  on_existing: fail
+  shard: object_clean
+  privileged: true
+  privileged_root: data/privileged
+wandb:
+  project: backstop
+  enabled: true
+  mode: offline
+# No published baseline for this checkpoint on libero_object under this recipe,
+# so there is nothing to gate against. The band is wide open on purpose:
+# record/cli.py exits 2 when the rate is outside the band even with
+# enforce: false, which would break the chained verify step.
+tolerance:
+  min_success_rate: 0.0
+  max_success_rate: 1.0
+  fallback_num_steps: 1
+  enforce: false

@@ -231,11 +231,147 @@ todos:
       (language_paraphrase) = 400/400 episodes recorded and verified.
     status: completed
   - id: libero-plus
-    content: "Timeboxed half-day spike: install the LIBERO-plus fork, check it against MuJoCo 3.3.2 and this lerobot, record a 60-80 episode external-validity slice (corpus B). Hard abort to week 6 if it is not recording by the end of the timebox."
-    status: pending
+    content: |
+      PAUSED, blocked on one explicit decision (asset download), not aborted.
+      Cloned to `external/LIBERO-plus` (gitignored), fork confirmed at
+      https://github.com/sylvestf/LIBERO-plus (named in lerobot's own
+      `LiberoPlusEnv` docstring, `lerobot/envs/configs.py`). Installed into an
+      isolated venv (`external/.venv-plus`), deliberately not the main `.venv`
+      -- the fork's package name is `libero`, identical to the one corpus A's
+      already-committed pipeline depends on, so an in-place install would
+      replace it for every other part of the project until `uv sync` restored
+      it. Not worth that risk for a compatibility spike.
+
+      Two real compatibility findings so far, both resolved:
+
+      1. The README's own install instructions (`pip install -e .`) are wrong
+         for this repo -- confirmed, not assumed. `setup.py` calls
+         `find_packages()`, which requires an `__init__.py` at every level
+         including the top; this repo only has `libero/libero/__init__.py`,
+         not `libero/__init__.py`, so `find_packages()` silently returns an
+         empty list and the editable install installs nothing importable.
+         lerobot's own docstring had already warned about this ("must be
+         cloned + PYTHONPATH'd rather than installed as a pyproject extra"),
+         and it checks out: `PYTHONPATH=external/LIBERO-plus` makes `import
+         libero` work as a PEP 420 namespace package.
+      2. First import chain needed: a pre-written `~/.libero`-style config
+         (via `LIBERO_CONFIG_PATH`, pointed at `external/.libero_plus_config`
+         so it never touches the main venv's own `~/.libero/config.yaml`) to
+         skip an interactive first-run wizard that otherwise blocks on stdin;
+         then matching the main venv's already-resolved dependency versions
+         for `robosuite==1.4.0`/`bddl==1.0.1` (cloudpickle, easydict, einops,
+         future, gymnasium, hydra-core, termcolor, thop); then `torch`,
+         `matplotlib`, and legacy `gym` (imported transitively by the fork's
+         own `envs/venv.py`, unrelated to lerobot's own gymnasium-based
+         `LiberoEnv`, which never calls into it). `import libero.libero.benchmark`
+         now succeeds and lists all seven standard suites.
+
+      One dependency needed a system package, not just a pip package: `wand`
+      (used for the sensor-noise perturbation's motion-blur effect) needs the
+      actual ImageMagick/MagickWand shared library, not just its Python
+      binding -- confirmed by trying `pip install wand` alone first, which
+      installed fine but failed at import with "MagickWand shared library not
+      found". Installed `libmagickwand-dev` via `sudo apt-get` (user ran it
+      directly; this session cannot supply a sudo password). Resolved cleanly.
+
+      `lerobot/envs/libero.py`'s `get_task_init_states(is_libero_plus=True)`
+      compatibility checks out against what actually ships in the fork:
+      `libero_newobj/` (the `_add_N`/`_levelN` new-object variants) exists in
+      the cloned repo's `init_files/`, and the perturbation-suffix stripping
+      regex (`_language_`, `_view_`, `_light_`, `_table_`/`_tb_`) matches real
+      filenames under `bddl_files/libero_spatial/` (2,032 files vs. the
+      original 10 -- confirmed by diffing a `_language_48` variant, which
+      changes only the `(:language ...)` line, and a `_light_44` variant,
+      which changes only the BDDL problem name -- neither touches objects or
+      assets, so language/lighting variants should not need new asset files).
+
+      The actual blocker: even the *unperturbed base* scene fails to build --
+      `OffScreenRenderEnv(bddl_file_name=<base task 0 bddl>)` raises
+      `FileNotFoundError` on `assets/scenes/libero_tabletop_base_style.xml`.
+      The repo does not ship `libero/libero/assets/` at all; it is a separate
+      download the README names (`assets.zip`,
+      huggingface.co/datasets/Sylvest/LIBERO-plus) and confirmed via the HF
+      API to be **6.4 GB**. This is a download requiring explicit sign-off
+      before fetching (project convention here, not a technical constraint),
+      and the answer was to stop and report rather than download it in this
+      session. So MuJoCo-3.3.2-against-a-real-reset is still unverified --
+      everything confirmed above is import-time/packaging compatibility, not
+      simulation compatibility.
+
+      Left, once the asset download is approved: unzip `assets.zip` into
+      `external/LIBERO-plus/libero/libero/assets`, re-run the base-scene
+      reset test (script sketch already written, not yet passing), confirm at
+      least the base scene and a `_language_N`/`_light_N` variant reset and
+      step cleanly under mujoco==3.3.2, then decide which perturbation
+      dimensions a 60-80 episode slice should draw from (favoring the ones
+      confirmed asset-free: language, light; camera-view and robot-init-state
+      likely also qualify but are unconfirmed) versus which pull in the new-
+      object/texture assets. Timebox has not been formally declared started
+      or exhausted -- this is a paused decision point, not the plan's
+      "not recording by end of timebox" abort condition.
+    status: in_progress
   - id: review-tool
-    content: "Auto proto-labeller from privileged state plus a local HTML review page (video, proposal, category buttons, onset scrubber). Same data contract as the week-5 viewer, deliberately."
-    status: pending
+    content: |
+      DONE. `src/backstop/label/signals.py` (pure numpy, 19 unit tests) +
+      `extract.py` (I/O) + `scripts/auto_label.py` (CLI) computed proto-labels
+      for all 400 corpus-A episodes into `artifacts/corpus/labels.jsonl`
+      (ADR-003's sidecar): per-episode eef path length, gripper cycle count,
+      and -- from the privileged sim state, not the dataset -- bowl
+      displacement, terminal bowl-to-plate distance, and a grasp proxy
+      (gripper closed within 8cm of the bowl). Category and onset-range
+      proposals are rule-based off those signals, thresholds grounded against
+      one real measured episode (documented in the module docstring), not
+      tuned against a labelled set that doesn't exist yet.
+
+      Getting the object-tracking signals right took a live MuJoCo
+      introspection, not a guess: `sim.model.jnt_qposadr`/`joint_id2name` on a
+      real libero_spatial env gave the exact qpos slice for
+      `akita_black_bowl_1` and `plate_1` (bowl at sim_state[10:13], plate at
+      sim_state[38:40], time-prefixed 92-float layout). Cross-checked against
+      all ten task bddls: every one shares the identical goal predicate `(On
+      akita_black_bowl_1 plate_1)`, so no per-task target lookup is needed.
+      Verified empirically against a real recorded episode (clean/000000):
+      the bowl moved 0.125 m and terminal bowl-to-plate distance was 0.033 m
+      on a real success -- the numbers the module's thresholds are grounded
+      against. `distractor`'s shard (105-wide sim_state, one extra
+      free-jointed object) is out of scope for object tracking by design --
+      `object_signals` returns `None` rather than guess at a shifted layout,
+      and those 50 episodes get an honest `unclassified_no_object_signal`
+      category instead of a confident-looking wrong number.
+
+      `scripts/review_server.py` (stdlib `http.server`, no new dependency) +
+      `scripts/review_assets/` serves a local page: episode list per shard
+      with outcome/review-status badges, video player, the auto-proposal,
+      a free-text category field (no frozen codebook yet -- that is the
+      `taxonomy` entry, not this one), and an onset-range scrubber (two step
+      inputs with "seek"/"set to current time" buttons). Saves POST to
+      `/api/label`, which merges into `labels.jsonl` without ever touching a
+      row already marked `reviewed` -- confirmed by re-running
+      `auto_label.py` after a manual save and checking the reviewed row
+      survived byte-for-byte. A `/api/label/reset` endpoint reopens a row to
+      `pending`, for the taxonomy's blind 20% re-code.
+
+      Exercised end-to-end in a real browser, not just curl: shard/episode
+      selection, video playback, save-and-persist, and the onset scrubber.
+      The scrubber surfaced two real bugs, both fixed and worth recording
+      since they will bite again if `scripts/review_server.py` is copied
+      elsewhere: (1) a CSS flex layout whose combined child min-widths
+      exceeded the viewport, pushing the review form off-screen without any
+      visible scrollbar hint -- fixed with `flex-wrap` and `min-width: 0` on
+      the flex children; (2) `video.currentTime` assignment silently no-op'd
+      because Chrome ties `HTMLMediaElement.seekable` to server-side `Range`
+      support, not to how much of the file is actually buffered -- `duration`
+      and `buffered` both looked correct, which made this look like a client
+      bug for a while. Fixed by adding real `Range`/206 support to
+      `_serve_video` and `-movflags +faststart` to the per-episode ffmpeg
+      extraction (episode clips are cut on first request from the per-shard
+      combined video LeRobot v3 actually stores, then cached).
+
+      Left for the `taxonomy` entry, not this one: freezing an actual
+      codebook, running stage-1 open coding, and reporting the auto-vs-human
+      agreement rate the plan asks for -- this entry only had to prove the
+      instrument works, not produce labelled data with it.
+    status: completed
   - id: taxonomy
     content: "Two-stage coding: open-code 25 failures, freeze a codebook, code all failures against it, re-code a blind 20% for self-consistency. Annotate an onset range on every failed episode. Write docs/taxonomy.md."
     status: pending

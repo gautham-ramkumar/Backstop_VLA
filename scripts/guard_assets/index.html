@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Backstop guard viewer</title>
+<style>
+  body { margin: 0; font-family: sans-serif; background: #14161a; color: #e6e8eb; }
+  header { display: flex; gap: 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #2c3038; }
+  header h1 { font-size: 16px; margin: 0; }
+  select, button { background: #1d2026; color: #e6e8eb; border: 1px solid #2c3038; border-radius: 4px; padding: 4px 8px; }
+  #layout { display: flex; height: calc(100vh - 46px); }
+  #sidebar { width: 280px; overflow-y: auto; border-right: 1px solid #2c3038; }
+  .ep { padding: 6px 10px; cursor: pointer; border-bottom: 1px solid #22252b; font-size: 13px; }
+  .ep.selected { background: #262b36; }
+  .fail { color: #e2564f; }
+  .ok { color: #3fbf7f; }
+  #main { flex: 1; padding: 16px; overflow: auto; }
+  video { width: 100%; max-width: 480px; background: black; }
+  svg { width: 100%; max-width: 640px; height: 160px; background: #1d2026; border-radius: 6px; }
+  #meta { color: #9aa1ac; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Backstop guard viewer</h1>
+  <select id="shard"></select>
+  <select id="signal"></select>
+  <span id="meta"></span>
+</header>
+<div id="layout">
+  <div id="sidebar"></div>
+  <div id="main">Run <code>scripts/evaluate_guard.py</code> if this page is empty.</div>
+</div>
+<script src="/static/guard.js"></script>
+</body>
+</html>

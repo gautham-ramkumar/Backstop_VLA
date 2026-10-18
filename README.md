@@ -34,10 +34,49 @@ project.
 
 ## Status
 
-**Week 1 of 6 complete: rollout infrastructure and reproduced baseline.**
+**Week 6 of 6: guard built and evaluated; hosted viewer and taxonomy write-up outstanding.**
 
-There is **no guard yet**. Weeks 1–2 build the corpus the guard will be trained and
-evaluated against. Signals land in Week 3.
+### Headline
+
+Headline metric, fixed in [ADR-005](docs/adr/005-headline-vs-stopwatch.md): how much
+sooner the guard ends a failing run than a plain stopwatch would, with both held to the
+same 5% false-stop budget.
+
+| | |
+|---|---|
+| **Saved over a stopwatch** | **13.4 steps (0.67 s)** on average, 10th–90th percentile −1.4 to 25.9 steps |
+| Splits where the guard did no better than the clock | 3 of 20 |
+| Held-out false-stop rate | 4.3% (budget 5%) |
+| Failures caught | all of them (the clock guarantees it) |
+
+*Guard: action-chunk disagreement OR stopwatch, both set from good runs only. LIBERO-Spatial
+corpus A, held-out half, 20 random splits. Details in [evaluation](docs/evaluation.md).*
+
+**Why a stopwatch is the baseline.** Every failure in the corpus stalls until the
+280-step cap, and good runs finish by about step 130. So "stop anything still running
+at step 132" already catches every failure inside the budget. The trust head, which
+the original plan made the headline, catches 34 of 41 held-out failures. On failures
+caught, the guard barely beats a timer. What it adds is time.
+
+**What that says about the hypothesis.** The signals do carry information: by the end of a
+run they separate failures from good runs well (about 0.8–0.9, where 0.5 is a coin flip), and perturbed runs that succeed score like
+clean ones, so the guard is not just reacting to a changed scene. But at the moment a
+reviewer marks a failure as starting (around step 40), the signals barely tell it apart
+from a good run. The guard fires before the clock on about half the failures. On the
+rest it cannot see the failure coming any earlier than the clock does.
+
+**Other results:**
+
+- The thresholds do not transfer to an unseen suite (LIBERO-Object): its good runs are
+  slower and score higher. Recalibrating from about 40 good runs in the new setting, with
+  no failures needed, brings the false-stop rate back under 5%.
+- The visual precondition check works as a per-object gate on an open-vocabulary
+  detector. It stops 28 of 30 runs whose instructed object is missing before the arm
+  moves; the headline guard stops them about 4 seconds in. It needs reference frames from
+  the same scenes it runs in, and it cannot tell some lookalike grocery cartons apart.
+  CLIP and SmolVLM2 did not work at all.
+- Single-split numbers overstated the guard. The trust head's false-stop rate on the
+  reported split (2.9%, later 4.3%) averages about 6% over 20 splits.
 
 ### Reproduced baseline
 
@@ -78,38 +117,41 @@ LIBERO rollout (MuJoCo, Franka Panda)   ← perturbation injection (week 2)
       ↓
 recorded episodes: per-step observations + action chunks + K samples
       ↓
-offline guard training and evaluation   ← week 3-4
+offline guard training and evaluation   ← src/backstop/guard, scripts/evaluate_*.py
       ↓
-exported artifacts → web viewer          ← week 5
+exported artifacts → web viewer          ← local only (scripts/guard_viewer.py)
 ```
 
 Rollout generation is slow and runs once. Guard development runs against recorded
 episodes and iterates in seconds. Recording early is a cost control, not just an
 engineering convenience.
 
-### Signals the guard will use
+### Signals
 
-| Signal | What it detects |
-|---|---|
-| Action-chunk disagreement | Sample the policy K times under different flow noise; high spread means no confident opinion about what to do next |
-| Temporal self-consistency | Chunks from successive timesteps overlap; disagreement in the overlap means the policy is changing its mind mid-motion |
-| Visual precondition check | Verify the instructed object is actually present and reachable before committing |
-| Progress monitoring | Compare predicted against observed state change — a gripper closing with no visual change has grasped nothing |
+| Signal | What it detects | Result |
+|---|---|---|
+| Action-chunk disagreement | Sample the policy K times under different flow noise; high spread means no confident opinion about what to do next | Carries signal. Headline guard. |
+| Temporal self-consistency | Chunks from successive timesteps overlap; disagreement in the overlap means the policy is changing its mind mid-motion | Carries signal, about as much as disagreement |
+| Visual precondition check | Verify the instructed object is actually present before committing | Works as a per-object detector gate (OWLv2) when its references come from the same scenes: stops 28 of 30 missing-object runs at step 0. Lines do not carry over to new layouts. |
+| Progress monitoring | Compare predicted against observed state change | Weak |
+| Trust head | Logistic combination of the action-stream signals | Catches the most failures on its own, but as a guard OR stopwatch it saves less time than disagreement alone (0.47 s vs 0.67 s). Combines the three action-stream signals; the visual check is a separate gate |
 
-Each is evaluated independently before any combination. The per-signal ablation matters
+Each was evaluated on its own before any combination. The per-signal ablation matters
 as much as the combined number, because it says which signal is doing the work.
 
 ### The metric
 
-Raw accuracy is the wrong measure — a guard that halts everything catches every failure
-and is useless. The headline is **detection rate at a 5% false-stop budget**: of the
-episodes that actually fail, what fraction does the guard catch, while halting at most
-5% of episodes that would have succeeded.
+Raw accuracy is the wrong measure: a guard that halts everything catches every failure
+and is useless. The false-stop budget is 5% of runs that would have succeeded, fixed in
+writing ([ADR-001](docs/adr/001-metric.md)) in week 1 before any guard number existed.
 
-That definition was fixed in writing ([ADR-001](docs/adr/001-metric.md)) in Week 1,
-before any guard number existed, and it is enforced in code — `write_guard_report()`
-raises if a caller tries to headline `accuracy`, `raw_accuracy`, or `success_rate`, and
-CI fails if the budget drifts off 0.05.
+ADR-001's headline was the share of failures caught within that budget. Once it turned
+out a stopwatch catches all of them, that number stopped saying anything about the
+signals. [ADR-005](docs/adr/005-headline-vs-stopwatch.md) replaced it with time saved
+over the stopwatch at the same budget, kept the old number as a secondary metric, and
+required results over 20 splits rather than one. Both are enforced in code:
+`write_guard_report()` only accepts the locked headline and raises on `accuracy`,
+`raw_accuracy`, or `success_rate`, and CI fails if the budget drifts off 0.05.
 
 ---
 
@@ -177,11 +219,11 @@ dataset. Run it after every recording run.
 | Week | Deliverable | Status |
 |---|---|---|
 | 1 | Rollout infrastructure, reproduced baseline, stored corpus | **done** |
-| 2 | Perturbation injection, labelled corpus, failure taxonomy | next |
-| 3 | All four signals implemented and independently ablated | |
-| 4 | Trust-score head, threshold calibration, held-out evaluation | |
-| 5 | Hosted interactive rollout viewer | |
-| 6 | Evaluation report and write-up | |
+| 2 | Perturbation injection, labelled corpus, failure taxonomy | corpus and labels **done**; `docs/taxonomy.md` not written |
+| 3 | All four signals implemented and independently ablated | **done** (visual check negative) |
+| 4 | Trust-score head, threshold calibration, held-out evaluation | **done** |
+| 5 | Hosted interactive rollout viewer | local viewer only, not hosted |
+| 6 | Evaluation report and write-up | report **done** ([evaluation](docs/evaluation.md)); write-up in progress |
 
 Explicitly out of scope: real hardware, recovery behaviour (the guard halts and flags,
 it does not replan), any policy fine-tuning, and comparing multiple policy architectures.
@@ -196,8 +238,12 @@ VLA failure modes is a genuine contribution even if the guard does not work.
 ## Documentation
 
 - [Runbook](docs/runbook.md) — commands, tolerances, machine setup
-- [ADR-001](docs/adr/001-metric.md) — why the headline is detection at a 5% false-stop budget
+- [Evaluation](docs/evaluation.md) — every guard result, with commands to reproduce it
+- [ADR-001](docs/adr/001-metric.md) — the 5% false-stop budget
+- [ADR-005](docs/adr/005-headline-vs-stopwatch.md) — why the headline is time saved over a stopwatch
 - [ADR-002](docs/adr/002-checkpoint.md) — why SmolVLA over OpenVLA-7B, and the locked recipe
+- [ADR-003](docs/adr/003-perturbation-schema.md) — perturbation schema and privileged sim state
+- [ADR-004](docs/adr/004-guard-calibration.md) — calibrate on one half, measure on the other
 - [Failures](docs/failures.md) — natural failures from the baseline run
 
 ## License

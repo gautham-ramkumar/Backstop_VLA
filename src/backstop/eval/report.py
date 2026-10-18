@@ -43,7 +43,7 @@ def write_eval_report(
             "status": "locked_not_yet_measured",
             "note": (
                 "Week-1 reports policy success rate as a setup check only. "
-                "The guard headline remains detection_at_false_stop."
+                f"The guard headline is {contract.headline_metric} (ADR-005)."
             ),
         },
     }
@@ -77,7 +77,7 @@ def write_guard_report(
     if headline_metric in FORBIDDEN_HEADLINES:
         raise HeadlineMetricError(
             f"Cannot headline {headline_metric!r}. Locked headline is {HEADLINE_METRIC} "
-            f"at a {DEFAULT_BUDGET_HINT}. See docs/adr/001-metric.md."
+            f"at a {DEFAULT_BUDGET_HINT}. See docs/adr/005-headline-vs-stopwatch.md."
         )
     contract = metric or load_metric_contract()
     if headline_metric != contract.headline_metric:
@@ -101,6 +101,45 @@ def write_guard_report(
 
 
 DEFAULT_BUDGET_HINT = "5% false-stop budget"
+
+
+def write_secondary_report(
+    *,
+    output_dir: Path,
+    metric_name: str,
+    values: dict[str, Any],
+    metric: MetricContract | None = None,
+) -> Path:
+    """Guard evaluation writer for a metric the contract lists as secondary.
+
+    Under ADR-005, ADR-001's detection rate is still reported per signal, but
+    it is no longer the headline. The payload names the real headline next to
+    it so a reader of one file cannot mistake which number leads.
+    """
+    if metric_name in FORBIDDEN_HEADLINES:
+        raise HeadlineMetricError(f"{metric_name!r} is not a guard metric at all")
+    contract = metric or load_metric_contract()
+    if metric_name not in contract.secondary_metrics:
+        raise HeadlineMetricError(
+            f"{metric_name!r} is not a secondary metric in the contract "
+            f"({sorted(contract.secondary_metrics)})"
+        )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "guard_eval.json"
+    path.write_text(
+        json.dumps(
+            {
+                "metric": metric_name,
+                "role": "secondary",
+                "headline_metric": contract.headline_metric,
+                "false_stop_budget": contract.false_stop_budget,
+                "values": values,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    return path
 
 
 def write_failures_markdown(path: Path, episodes: list[dict[str, Any]]) -> Path:
