@@ -1,0 +1,15 @@
+# Lift-and-back-off recovery motion (src/backstop/recover/reposition.py).
+#
+# Distances are from where the hand was when the guard fired. 10 cm up clears
+# the bowl and plate rims with room to spare; 8 cm back takes the hand off the
+# spot the policy was stuck over without leaving the camera's view.
+# max_action 0.5 asks for at most 2.5 cm per step; the arm lags that request
+# (~6 mm per step measured), so a phase usually ends on tolerance, not on
+# max_steps_per_phase.
+lift_m: 0.10
+back_m: 0.08
+open_steps: 5
+settle_steps: 5
+max_steps_per_phase: 30
+max_action: 0.5
+tolerance_m: 0.01

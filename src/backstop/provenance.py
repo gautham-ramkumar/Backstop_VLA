@@ -1,7 +1,8 @@
-"""Run provenance: git SHA, MuJoCo version, policy pin, seed."""
+"""Run provenance: git SHA, MuJoCo version, policy pin, seed, input hashes."""
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,30 @@ def git_sha(repo_root: Path | None = None) -> str | None:
     except (OSError, subprocess.CalledProcessError):
         return None
     return result.stdout.strip() or None
+
+
+def git_dirty(repo_root: Path | None = None) -> bool | None:
+    """True if tracked files differ from HEAD, so the SHA alone does not pin the code."""
+    cwd = repo_root or Path(__file__).resolve().parents[2]
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return bool(result.stdout.strip())
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def mujoco_version() -> str | None:
