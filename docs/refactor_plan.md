@@ -1,6 +1,6 @@
 # Refactor plan: seams, typed corpus, smaller code
 
-**Status:** proposed, not started. The Week 3–6 work is committed, and the experiments
+**Status:** Stage 0 done (2026-10-18); the rest proposed. The Week 3–6 work is committed, and the experiments
 that lost were archived on 2026-10-18 (tag `research-archive-2026-10`,
 [experiments.md](experiments.md)). This plan starts from that smaller base.
 
@@ -51,7 +51,7 @@ Code lines only, comments, docstrings and blank lines excluded:
 |---|---|---|
 | Archive tag (all experiments live) | 7,450 | 2,849 |
 | **After archiving the losing experiments** | **5,405 (−27%)** | 2,605 |
-| **Target after this plan** | **~5,000 (−33% overall)** | ~2,900 |
+| **Target after this plan** | **~5,230 (−30% overall)** | ~3,250 |
 
 Most of the shrinking has already happened, by deleting experiments rather than by
 refactoring. The archive removed 12 files and trimmed 9 others, and every live number
@@ -78,7 +78,7 @@ is the estimated change in code lines for `src/` plus `scripts/` once the stage 
 
 | Stage | What | Effort | Touched | Net (src+scripts) | Risk |
 |---|---|---|---|---|---|
-| 0 | Golden digests, snapshot, import-layer test | S | 250 | ~0 (tests +250) | low |
+| 0 | Golden digests, snapshot, import-layer test — **done** | S | 580 | +224 measured (tests +354) | low |
 | C | Delete obsolete scripts and the last duplication | S | 350 | **about −250** | low |
 | 5 | Simulator seam + `PerturbationBase` | M | 250 | −20 | medium |
 | 6 | Policy seam: `ChunkPolicy`, `Processors`, `policy/smolvla.py` | M | 250 | −40 | medium |
@@ -87,7 +87,7 @@ is the estimated change in code lines for `src/` plus `scripts/` once the stage 
 | 1 | `backstop/corpus/` reader | M | 250 | −50 | low–medium |
 | 2 | Typed `EpisodeKey` + `TraceRow` | S–M | 200 | −30 | medium |
 | 4 | Paths/guard config + shared constants | S | 150 | −40 | low |
-| | **Total** | | ~2,200 | **about −400** | |
+| | **Total** | | ~2,500 | **about −180** (Stage 0 measured, the rest estimated) | |
 
 Stage 7 is the one stage expected to grow. Replacing 18 keyword arguments with two small
 dataclasses, and one long function with four named pieces, costs a few lines. That's the
@@ -110,37 +110,46 @@ needs your explicit OK in the stage's review.
 
 ---
 
-## Stage 0: safety net (no `src/` changes)
+## Stage 0: safety net — done
 
-Before refactoring anything, make "unchanged" something we can check.
+Before refactoring anything, make "unchanged" something we can check. Four checks,
+each proven to fail when it should (a deliberate break was caught, then reverted):
 
-- **Golden rollout test** (`tests/unit/test_rollout_golden.py`, sim job):
-  - Reuses the CPU fakes in `test_rollout_loop.py` with K=4, two episodes,
-    `action_noise` and `privileged: true`.
-  - Gives `FakeVecEnv` a fake `unwrapped._env` with `get_sim_state()` and
-    `regenerate_obs_from_state()`, so the privileged path runs through the real seam.
-  - Hashes every frame (sorted keys, bytes plus dtype and shape), every npz array and
-    the per-episode stats rows. The digests are committed to
-    `tests/unit/golden/rollout.json`.
-- **Real-sim smoke** (advisory, local):
-  - `configs/record/golden_smoke.yaml` records task 0, 2 episodes, K=4, privileged.
-  - `scripts/compare_recordings.py` checks parquet columns, `meta/episodes` and npz
-    arrays for exact equality.
-  - Record twice at HEAD first. If the two baselines differ (GPU nondeterminism), the
-    fake golden test is the gate and this smoke run only advises.
-- **Analysis snapshot** (`just snapshot OUT=...`, local, needs `data/`):
-  - Runs `evaluate_guard` (into `OUT`), every `evaluate_*`, `freeze_guard`, and
-    `auto_label` on a *copy* of `labels.jsonl`.
-  - Writes a sha256 manifest of every output and of stdout.
-  - Where a script has no output flag, add one with the same default. This is the only
-    script edit in Stage 0.
-- **Import-layer test** (`tests/unit/test_import_layers.py`, CPU, AST-based):
-  - Asserts the allowed package edges (see *Target layout*).
-  - Starts with an allowlist of today's violations, which later stages must shrink.
-  - Also asserts that importing `backstop.{guard,label,recover}` pulls in no `torch`,
-    `lerobot` or `gymnasium`.
+- **Golden rollout test** (`tests/unit/test_rollout_golden.py`, sim CI job).
+  - Runs the real `run_episodes` on the CPU fakes with every recording feature on:
+    K=4, two episodes, `action_noise`, privileged sim-state capture.
+  - Compares a sha256 of every frame and every sim-state sidecar, plus the readable
+    per-episode rows and timer stage counts, with `tests/unit/golden/rollout.json`.
+  - Caught: executing a different noise sample (`frames[0] changed`), and capturing
+    sim state after the step instead of before (`privileged[0] changed`).
+  - The fakes it shares with `test_rollout_loop.py` live in `tests/fakes/rollout.py`.
+    The fake env exposes a fake `ControlEnv` through the real `unwrapped._env` seam.
+  - Regenerate only for an intended change: `BACKSTOP_UPDATE_GOLDEN=1 uv run pytest
+    tests/unit/test_rollout_golden.py`, then review the diff.
+- **Real-simulator comparison** (`just compare-recordings OUT [EARLIER]`, local, GPU,
+  about 4 minutes). Records `configs/record/golden_smoke.yaml` into `OUT` and compares
+  every parquet column, metadata file and sim-state array with an earlier recording.
+  - Two recordings at the same commit were **identical**, videos included, on the
+    RTX 4070 laptop. So on this machine the comparison is a real gate, not advice.
+- **Analysis snapshot** (`just snapshot OUT [MANIFEST]`, local, about 20 seconds).
+  Reruns `evaluate_guard`, `evaluate_stopwatch`, `freeze_guard`, `pretest_reselect` and
+  `auto_label` (on a copy of the labels) into `OUT`, and writes a sha256 manifest.
+  - The `OUT` path and the git commit stamped on frozen rules are normalised first.
+  - Two snapshots in a row are identical. No script needed a new flag.
+- **Import-layer test** (`tests/unit/test_import_layers.py`, CPU).
+  - Enforces the package layering below, with today's three violations listed and
+    tied to the stage that removes them. The list can only shrink.
+  - Scripts may not import other scripts (one listed exception, Stage C).
+  - Importing `guard`, `label` and `recover` must not load torch, transformers,
+    lerobot, gymnasium, mujoco, robosuite or libero.
 
-**Done when:** CI is green and the digests and snapshot reproduce on a second run.
+**A finding along the way:** re-running `auto_label` today adds 100 `object_clean`
+rows that the committed `labels.jsonl` lacks. All 400 existing rows are unchanged. The
+object suite was recorded after the labels were made, and nothing reads object-suite
+onsets, so this is a gap in the data, not a bug.
+
+**Size:** `src/` + `scripts/` +224 code lines (the two comparison tools), tests +354.
+The estimate below had not counted the tools as scripts.
 
 ## Stage 5: simulator seam
 

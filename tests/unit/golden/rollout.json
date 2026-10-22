@@ -1,0 +1,55 @@
+{
+  "episodes": [
+    {
+      "episode_index": 0,
+      "n_steps": 4,
+      "seed": 0,
+      "success": true,
+      "suite": "libero_spatial",
+      "task_id": 0
+    },
+    {
+      "episode_index": 1,
+      "n_steps": 4,
+      "seed": 1,
+      "success": true,
+      "suite": "libero_spatial",
+      "task_id": 0
+    }
+  ],
+  "frames": [
+    "c34d10810d89b98c7663a7958550c6fb3da49187e7fef1f664b199aaf928a3e5",
+    "264c5e73d39072f994dd7a9ef4ff6eeac91632a3dde44cc68b108a35f453235e",
+    "6ba401d30178a5f7400c8920a62db6e7d1482243b219e6484d4a90719e6d07be",
+    "68bf38a5481efea7dbbdb6058cc6ef96335e9ee2f8f0b4771b917ab96fd882ed",
+    "9bb5941d5233756998b44414c66607841fa6221566b13e9caa278e622df621b9",
+    "ad64917e247da283b15ebbb34fba6dd16b93ba13779be739b1fe270274651709",
+    "d7ce4306f762956ea46867b8c8c51a29c71d8c594d010d12368ecf4fc57acda0",
+    "41b1ee1bd606eaa6d1fb2408e5c6853c5d6c80af08e961e522b60b3996cd3873"
+  ],
+  "privileged": [
+    "3414dcc75e641a32726ef94ed5aac0128f10f8c3590de5333aa5fe0d5ce8fa33",
+    "1879cf6df2972042ed928d2659a76d8dae55cafa3136bcad8041476f71627f04"
+  ],
+  "timing": {
+    "episode_steps": [
+      4,
+      4
+    ],
+    "n_episodes": 2,
+    "n_steps": 8,
+    "stage_calls": {
+      "action_post": 8,
+      "env_reset": 2,
+      "env_step": 8,
+      "finalize": 1,
+      "frame_write": 8,
+      "normalize": 8,
+      "obs_prep": 8,
+      "policy_samples": 8,
+      "policy_select": 8,
+      "privileged": 8,
+      "save_episode": 2
+    }
+  }
+}

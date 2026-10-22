@@ -62,6 +62,9 @@ quote-style = "double"
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
 include = ["src", "tests", "scripts"]
+# Resolve the same import roots pytest uses, so tests importing scripts or
+# tests/fakes are type-checked against the real code.
+extraPaths = ["src", "scripts", "tests"]
 exclude = [".venv", "data", "artifacts", "wandb"]
 venvPath = "."
 venv = ".venv"
@@ -69,7 +72,8 @@ reportMissingImports = "none"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# scripts/ is importable so experiment drivers can be tested directly.
-pythonpath = ["src", "scripts"]
+# scripts/ is importable so experiment drivers can be tested directly, and
+# tests/ so shared test doubles (tests/fakes) are one import away.
+pythonpath = ["src", "scripts", "tests"]
 addopts = "-q -p no:launch_testing"
 filterwarnings = ["ignore::DeprecationWarning"]

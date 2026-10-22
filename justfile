@@ -55,6 +55,17 @@ guard-reports:
 	uv run python scripts/evaluate_guard.py
 	uv run python scripts/evaluate_stopwatch.py
 
+# Keep baselines under artifacts/snapshots (git-ignored, not cleared like /tmp):
+# `just snapshot artifacts/snapshots/after artifacts/snapshots/before/manifest.json`.
+# Fingerprint every analysis output into OUT (~20 s), optionally comparing with a manifest.
+snapshot out compare="":
+	uv run python scripts/snapshot_outputs.py --out {{out}} {{ if compare != "" { "--compare " + compare } else { "" } }}
+
+# Example: `just compare-recordings artifacts/snapshots/rec_after artifacts/snapshots/rec_before`.
+# Record a short fixed real-simulator run (GPU), optionally comparing with an earlier one.
+compare-recordings out compare="":
+	uv run python scripts/compare_recordings.py --out {{out}} {{ if compare != "" { "--compare " + compare } else { "" } }}
+
 # Recovery: freeze the headline guard (5% and 20%), held out from the clean shard.
 freeze-guard:
 	uv run python scripts/freeze_guard.py

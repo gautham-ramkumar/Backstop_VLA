@@ -23,7 +23,7 @@ jobs:
         # lerobot, gymnasium, libero) and run in the `sim` job. Any other skip
         # fails the run (tests/conftest.py).
         env:
-          BACKSTOP_ALLOWED_SKIPS: test_batched_sampling,test_rollout_loop,test_libero_config,test_perturb,test_perturb_wrapper,test_record_safety,test_cli,test_eval_pipeline
+          BACKSTOP_ALLOWED_SKIPS: test_batched_sampling,test_rollout_loop,test_libero_config,test_perturb,test_perturb_wrapper,test_record_safety,test_cli,test_eval_pipeline,test_rollout_golden
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: uv run pytest -rs
       - name: Metric lock

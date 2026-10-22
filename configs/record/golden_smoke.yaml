@@ -1,0 +1,47 @@
+# A short, fixed real-simulator recording for before/after comparisons
+# (scripts/compare_recordings.py). Same run as configs/eval/spatial_smoke.yaml,
+# with privileged sim-state capture on, so the sidecar path is compared too.
+#
+# The script overrides every output path and disables wandb, so recording this
+# never touches data/ or artifacts/eval. `root` and `privileged_root` below are
+# only what you'd get running it by hand.
+seed: 0
+output_dir: artifacts/eval/golden_smoke
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 10
+env:
+  type: libero
+  task: libero_spatial
+  task_ids: [0]
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 2
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 4
+  repo_id: local/backstop_golden_smoke
+  root: data/lerobot/backstop_golden_smoke
+  on_existing: overwrite
+  shard: golden_smoke
+  privileged: true
+  privileged_root: data/privileged
+wandb:
+  project: backstop
+  enabled: false
+  mode: disabled
+# The question is "did the recording change", not "did it score": 2 episodes
+# cannot resolve a 70-90% band.
+tolerance:
+  min_success_rate: 0.0
+  max_success_rate: 1.0
+  fallback_num_steps: 1
+  enforce: false
