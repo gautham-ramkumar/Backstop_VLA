@@ -3,8 +3,8 @@
 Contents are ground truth the policy never sees: the full flattened MuJoCo state
 at every control step. Permitted uses are labelling, failure-onset annotation and
 counterfactual branching (docs/recovery.md). **Forbidden as guard input** -- which
-is why this lives in its own tree rather than as a dataset column. Week-3 signal
-code loads the LeRobot dataset and therefore cannot reach any of it by accident.
+is why this lives in its own tree rather than as a dataset column. Guard code
+loads the LeRobot dataset and therefore cannot reach any of it by accident.
 
 One `.npz` per episode under `{root}/{shard}/{episode_index:06d}.npz`:
 
@@ -32,7 +32,7 @@ class PrivilegedWriter:
 
     Deliberately strict. Every failure here raises instead of warning: a sidecar
     that silently stops writing looks exactly like one that was never enabled, and
-    the difference only surfaces during week-2 labelling, after the GPU time is
+    the difference only surfaces during labelling, after the GPU time is
     spent.
     """
 

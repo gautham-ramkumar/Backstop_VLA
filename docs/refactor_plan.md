@@ -1,6 +1,6 @@
 # Refactor plan: seams, typed corpus, smaller code
 
-**Status:** Stage 0 done (2026-10-18); the rest proposed. The Week 3–6 work is committed, and the experiments
+**Status:** Stages 0 and C done; the rest proposed. The Week 3–6 work is committed, and the experiments
 that lost were archived on 2026-10-18 (tag `research-archive-2026-10`,
 [experiments.md](experiments.md)). This plan starts from that smaller base.
 
@@ -79,7 +79,7 @@ is the estimated change in code lines for `src/` plus `scripts/` once the stage 
 | Stage | What | Effort | Touched | Net (src+scripts) | Risk |
 |---|---|---|---|---|---|
 | 0 | Golden digests, snapshot, import-layer test — **done** | S | 580 | +224 measured (tests +354) | low |
-| C | Delete obsolete scripts and the last duplication | S | 350 | **about −250** | low |
+| C | Delete obsolete scripts and the last duplication — **done** | S | 900 | **−207 measured** | low |
 | 5 | Simulator seam + `PerturbationBase` | M | 250 | −20 | medium |
 | 6 | Policy seam: `ChunkPolicy`, `Processors`, `policy/smolvla.py` | M | 250 | −40 | medium |
 | 7 | Split `_rollout_one` into obs / decide / sink | L | 350 | **+40** | **high** |
@@ -87,26 +87,29 @@ is the estimated change in code lines for `src/` plus `scripts/` once the stage 
 | 1 | `backstop/corpus/` reader | M | 250 | −50 | low–medium |
 | 2 | Typed `EpisodeKey` + `TraceRow` | S–M | 200 | −30 | medium |
 | 4 | Paths/guard config + shared constants | S | 150 | −40 | low |
-| | **Total** | | ~2,500 | **about −180** (Stage 0 measured, the rest estimated) | |
+| | **Total** | | ~3,100 | **about −140** (Stages 0 and C measured, the rest estimated) | |
 
 Stage 7 is the one stage expected to grow. Replacing 18 keyword arguments with two small
 dataclasses, and one long function with four named pieces, costs a few lines. That's the
 price of making the recovery runner a reuse instead of a copy.
 
-## Stage C: delete the rest
+## Stage C: delete the rest — done
 
-Each item was checked for callers on 2026-10-18. Git history keeps everything.
-
-| What | Why it can go | Code lines |
+| What | Done | Code lines |
 |---|---|---|
-| `scripts/calibration_sweep.py`, `scripts/record_corpus_a_continuous_families.sh` | One-off Week-2 tools, referenced from nowhere (README, docs, justfile, tests, CI) | ~170 |
-| `guard_viewer.py` ↔ `review_server.py` | A shared HTTP handler base replaces the borrowed private methods and the duplicated JSON helpers | ~50 |
-| `verify_corpus.py` ↔ `verify_sim_state_roundtrip.py` | The same PASS/FAIL check harness, twice | ~20 |
-| History-diary prose | "Week N / day 1" references in code. The history is already in ADRs and git; keep the *why*, cut the *when*. Prose isn't counted in the net figure, but files get shorter | (prose) |
-| Small leftovers | The unused `CONTROL_FPS` in `review_server.py`, orphan comments | ~10 |
+| `scripts/calibration_sweep.py`, `scripts/record_corpus_a_continuous_families.sh` | Deleted; referenced from nowhere | −170 |
+| `guard_viewer.py` ↔ `review_server.py` | One shared base, `backstop.label.web`: video clip cache, JSON replies, traversal-safe assets, Range video. The guard viewer no longer borrows the review server's private methods | −60 net |
+| `verify_corpus.py` ↔ `verify_sim_state_roundtrip.py` | One PASS/FAIL harness, `backstop.checks`. `verify_corpus` also dropped its private copy of `parquet_io.as_array` | −25 |
+| History-diary prose | About 20 comments and docstrings reworded to say why, not when. Kept: design-document citations, real file names, and any text written into outputs | (prose) |
+| Leftovers | The unused `CONTROL_FPS`, two orphaned comments left by the archive deletion | −2 |
 
-**Verify:** the analysis snapshot is byte-identical. Deleting the two obsolete scripts
-needs your explicit OK in the stage's review.
+- **Fixed along the way:** the guard viewer crashed on its main page, because it still read the `trust` field the archive removed from traces. It had no tests. It now has route-level tests against a real local server, as does the shared base.
+- **Verified:**
+  - the analysis snapshot is identical to the Stage 0 baseline;
+  - both verify scripts print byte-identical output before and after (19/19, 6/6);
+  - 334 tests pass with no skips allowed;
+  - the import-layer test's script exception is gone (scripts import no other script).
+- **Size:** `src/` + `scripts/` −207 (`src/` +127 for the shared modules, `scripts/` −334), tests +141.
 
 ---
 

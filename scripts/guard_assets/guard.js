@@ -73,7 +73,7 @@ async function showEpisode() {
   svg.appendChild(line);
   main.appendChild(video);
   main.appendChild(svg);
-  main.appendChild(el("p", { id: "meta", text: `${trace.task} — ${state.signal} episode score ${score == null ? "n/a" : Number(score).toFixed(3)}, trust ${trace.trust == null ? "n/a" : Number(trace.trust).toFixed(3)}` }));
+  main.appendChild(el("p", { id: "meta", text: `${trace.task} — ${state.signal} episode score ${score == null ? "n/a" : Number(score).toFixed(3)}` }));
 }
 
 async function boot() {

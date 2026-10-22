@@ -28,6 +28,7 @@ SCRIPTS = ROOT / "scripts"
 FOUNDATION = frozenset({"backstop", "schema", "config", "provenance", "parquet_io"})
 ALLOWED: dict[str, frozenset[str]] = {
     "backstop": frozenset({"schema"}),
+    "checks": frozenset(),
     "schema": frozenset(),
     "config": frozenset(),
     "parquet_io": frozenset(),
@@ -47,9 +48,7 @@ KNOWN_VIOLATIONS: dict[tuple[str, str], str] = {
     ("label", "record"): "Stage 1: the privileged-sidecar reader moves to backstop.corpus",
     ("record", "eval"): "Stage 8: the record CLI moves out of the package it orchestrates",
 }
-KNOWN_SCRIPT_IMPORTS: dict[tuple[str, str], str] = {
-    ("guard_viewer", "review_server"): "Stage C: a shared HTTP handler base",
-}
+KNOWN_SCRIPT_IMPORTS: dict[tuple[str, str], str] = {}
 # Must never be imported by the analysis packages: they run on the CPU job,
 # without the simulator, the policy or a GPU.
 HEAVY = ("torch", "transformers", "lerobot", "gymnasium", "mujoco", "robosuite", "libero")

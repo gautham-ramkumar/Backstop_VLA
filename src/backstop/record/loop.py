@@ -35,7 +35,7 @@ def create_dataset(
     a wrong value silently desyncs viewer playback and lead-time-in-seconds.
 
     `record.on_existing` decides what happens when the root is already populated.
-    Week 1 always destroyed it, which is how a stray re-run costs a night of GPU.
+    Always destroying it is how a stray re-run once cost a night of GPU.
     """
     _assert_privileged_decided(cfg)
 
@@ -80,7 +80,7 @@ def create_dataset(
 def _assert_privileged_decided(cfg: PipelineConfig) -> None:
     """A named shard must say, out loud, whether it captures privileged sim state.
 
-    `record.privileged` defaults to false, so a week-2 shard config that simply
+    `record.privileged` defaults to false, so a shard config that simply
     forgets the key records a corpus with no sim state -- and every use of it
     (onset annotation, auto proto-labels, counterfactual branching) needs the
     GPU run repeated to get it back. Nothing else in the run would complain: the
@@ -331,7 +331,7 @@ def _rollout_one(
         with torch.inference_mode():
             # Split from the sampling below because they answer different questions:
             # `policy_select` is the cost K cannot remove, `policy_samples` is the
-            # cost K adds. The day-1 gate is the ratio between them.
+            # cost K adds. The throughput benchmark reports the ratio between them.
             with timer("policy_select"):
                 action = adapter.select_action(
                     observation, noise=adapter.noise_for(episode_seed=seed, step=step, index=0)

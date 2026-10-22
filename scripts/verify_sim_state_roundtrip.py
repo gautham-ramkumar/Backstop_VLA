@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Day-1 gate (Week 2): does `restore_sim_state` actually restore state?
+"""Does `restore_sim_state` actually restore state?
 
 `docs/recovery.md` and the privileged sidecar (`src/backstop/record/privileged.py`)
 both rest on one claim that nothing in the test suite checked: capture a mid-episode
@@ -23,6 +23,7 @@ import argparse
 
 import numpy as np
 
+from backstop.checks import Checks
 from backstop.config import EnvYamlConfig, EvalYamlConfig
 from backstop.env.libero import (
     close_libero,
@@ -32,11 +33,8 @@ from backstop.env.libero import (
 )
 from backstop.schema import ACTION_DIM
 
-_results: list[tuple[bool, str, str]] = []
-
-
-def check(ok: bool, name: str, detail: str = "") -> None:
-    _results.append((ok, name, detail))
+CHECKS = Checks()
+check = CHECKS.check
 
 
 def _synthetic_actions(n: int, seed: int) -> np.ndarray:
@@ -153,16 +151,9 @@ def main(argv: list[str] | None = None) -> int:
 
     run(args.task, args.task_id, args.steps, args.branch_at, args.seed)
 
-    width = max(len(name) for _, name, _ in _results)
-    failed = 0
-    for ok, name, detail in _results:
-        if not ok:
-            failed += 1
-        print(f"{'PASS' if ok else 'FAIL'}  {name.ljust(width)}  {detail}")
-    print(f"\n{len(_results) - failed}/{len(_results)} checks passed")
-    if failed:
-        print("\nrestore_sim_state does not round-trip. Do not record the clean K=4 shard.")
-    return 1 if failed else 0
+    return CHECKS.report(
+        on_failure="restore_sim_state does not round-trip. Do not record the clean K=4 shard."
+    )
 
 
 if __name__ == "__main__":

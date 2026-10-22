@@ -1,8 +1,8 @@
-"""Perturbation families for week 2.
+"""Perturbation families: named, tunable ways to make the environment harder.
 
-Week 1 produced 30 natural failures and every one of them was the same failure:
-stall until the 280-step cap. One mode cannot support a taxonomy, so week 2 makes
-the environment harder in named, tunable ways and records what breaks.
+The policy's 30 natural failures were all the same failure, a stall until the
+280-step cap. One mode cannot support a taxonomy, so the corpus makes the
+environment harder in named ways and records what breaks.
 
     from backstop.perturb import make_perturbation
     perturbation = make_perturbation("lighting", strength=0.6)

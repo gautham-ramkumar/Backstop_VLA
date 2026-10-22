@@ -28,7 +28,6 @@ import numpy as np
 from backstop.env.libero import ensure_libero_config, scene_objects
 
 
-# BDDL class names whose plain name is not the snake case spelled out.
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite", default="libero_10")

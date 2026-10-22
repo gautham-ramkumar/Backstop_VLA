@@ -1,6 +1,6 @@
 """Per-stage wall-clock accounting for the record loop.
 
-Week 2 sizes its corpus from measured seconds per episode, and that decision
+The corpus is sized from measured seconds per episode, and that decision
 needs a *breakdown* rather than one number. The two candidate answers point in
 opposite directions: if the flow-matching forward pass dominates the step then
 K=4 roughly triples it and the corpus has to shrink, but if OSMesa rendering of

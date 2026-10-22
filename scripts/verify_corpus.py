@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Phase-2 gate: does a recorded run actually contain what week 1 promised?
+"""Does a recorded run actually contain what the recording contract promises?
 
 Every check here corresponds to a bug that shipped silently once. Run this after
 every GPU recording run, before trusting the corpus or moving to the next phase.
@@ -19,22 +19,16 @@ from pathlib import Path
 
 import numpy as np
 
+from backstop.checks import Checks
+from backstop.parquet_io import as_array
+
 CONTROL_FPS = 20
 LIBERO_SPATIAL_MAX_STEPS = 280
 GRIPPER_QPOS_ABS_MAX = 0.06
 ACTION_ABS_MAX = 1.5
 
-_results: list[tuple[bool, str, str]] = []
-
-
-def check(ok: bool, name: str, detail: str = "") -> None:
-    _results.append((ok, name, detail))
-
-
-def _as_array(column: list, trailing: tuple[int, ...]) -> np.ndarray:
-    """Parquet list columns come back flat or nested; normalise to (N, *trailing)."""
-    flat = np.array([np.asarray(row, dtype=np.float32).reshape(-1) for row in column])
-    return flat.reshape((flat.shape[0], *trailing))
+CHECKS = Checks()
+check = CHECKS.check
 
 
 def verify_artifacts(artifacts: Path) -> dict:
@@ -99,10 +93,10 @@ def verify_dataset(dataset: Path, perturbation: str = "clean") -> None:
     data = table.to_pydict()
     k = info["features"]["action_chunk_samples"]["shape"][0]
     chunk_hw = tuple(info["features"]["action_chunk"]["shape"])
-    chunk = _as_array(data["action_chunk"], chunk_hw)
-    samples = _as_array(data["action_chunk_samples"], (k, *chunk_hw))
-    state = _as_array(data["observation.state"], (8,))
-    action = _as_array(data["action"], (7,))
+    chunk = as_array(data["action_chunk"], chunk_hw)
+    samples = as_array(data["action_chunk_samples"], (k, *chunk_hw))
+    state = as_array(data["observation.state"], (8,))
+    action = as_array(data["action"], (7,))
 
     check(
         float(np.abs(chunk).max()) > 0.0,
@@ -125,7 +119,7 @@ def verify_dataset(dataset: Path, perturbation: str = "clean") -> None:
     # unconditionally is what would have caught the original bug (chunks left in
     # policy space) and would also catch a shard silently recording the wrong one.
     if "action_policy" in data:
-        action_policy = _as_array(data["action_policy"], (7,))
+        action_policy = as_array(data["action_policy"], (7,))
         check(
             bool(np.allclose(action_policy, chunk[:, 0], rtol=1e-3, atol=1e-4)),
             "action_policy == action_chunk[0] (same units)",
@@ -173,16 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     run = verify_artifacts(args.artifacts)
     verify_dataset(args.dataset, perturbation=run.get("perturbation", "clean"))
 
-    width = max(len(name) for _, name, _ in _results)
-    failed = 0
-    for ok, name, detail in _results:
-        if not ok:
-            failed += 1
-        print(f"{'PASS' if ok else 'FAIL'}  {name.ljust(width)}  {detail}")
-    print(f"\n{len(_results) - failed}/{len(_results)} checks passed")
-    if failed:
-        print("\nDo NOT proceed to the next phase until these are green.")
-    return 1 if failed else 0
+    return CHECKS.report(on_failure="Do NOT proceed to the next phase until these are green.")
 
 
 if __name__ == "__main__":

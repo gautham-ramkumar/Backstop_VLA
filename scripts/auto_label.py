@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Auto proto-labeller (Week 2 review tool, part 1 of 2).
+"""Auto proto-labeller: proposes a failure category and onset range per episode.
 
 Computes per-episode signals from a recorded shard (dataset + privileged sim
 state) and proposes a failure category and an onset range, per

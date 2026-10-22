@@ -1,15 +1,16 @@
-"""Week 3: guard signals and the headline metric (ADR-001, ADR-004).
+"""The guard: action-chunk disagreement OR a stopwatch (ADR-005).
 
-`signals.py` is pure numpy and holds all four README signals. Three of them
-read columns already in the dataset (chunks, executed action, proprio). The
-visual precondition reads an image-text similarity computed outside this
-package. `split.py` and `calibrate.py` implement the calibrate-on-one-half /
-measure-on-the-other methodology ADR-004 documents. `persist.py` is the
-stop rule that requires a score to stay high, chosen without onset labels.
-`step_model.py` is a per-step logistic fit on the calibration half.
-`extract.py` does the I/O. No privileged sim state anywhere in this package
--- ADR-003 forbids it as guard input, and a signal that needed it couldn't
-ship.
+- `signals.py`: the disagreement signal, pure numpy.
+- `stopwatch.py`: the stop rule, both triggers set from good runs only.
+- `online.py`: the same rule step by step, for use inside a rollout.
+- `calibrate.py`, `split.py`: calibrate on one half, measure on the other (ADR-004).
+- `presence.py`, `vision.py`: the per-object detector gate, kept beside the guard.
+- `extract.py`, `traces.py`, `scoring.py`, `summarize.py`: reading recordings and
+  trace rows, and the numbers the reports print.
+
+No privileged sim state anywhere in this package: ADR-003 forbids it as guard
+input, and a signal that needed it could not ship. The signals that lost are
+written up in docs/experiments.md.
 """
 
 from __future__ import annotations

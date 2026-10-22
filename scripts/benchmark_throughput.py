@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-"""Day-1 week-2 gate: what does a control step actually cost, and where?
+"""What does a control step actually cost, and where?
 
-The week-2 corpus must be recorded at K=4 -- at K=1 `sample_chunks` short-circuits
+The corpus must be recorded at K=4 -- at K=1 `sample_chunks` short-circuits
 and stores four copies of the executed chunk, so chunk disagreement, the first
 guard signal, is identically zero. K=4 is not free, and the plan's ~20 h recording
 budget is only defensible against a measured number.

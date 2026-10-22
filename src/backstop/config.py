@@ -43,19 +43,19 @@ class RecordYamlConfig(BaseModel):
     k_samples: int = Field(default=1, ge=1)
     repo_id: str = "local/backstop"
     root: str = "data/lerobot/backstop"
-    # Week 1 unconditionally rmtree'd `root`, so a stray re-run destroyed hours of GPU
+    # An unconditional delete of `root` once let a stray re-run destroy hours of GPU
     # time in silence. `fail` is the default because the safe action is the one you get
     # when you have not thought about it; `overwrite` must be typed on purpose.
     on_existing: Literal["fail", "resume", "overwrite"] = "fail"
     shard: str | None = None
-    # Privileged sim state: outside the LeRobot dataset by construction, so week-3
-    # signal code cannot reach it. Off by default; every week-2 corpus config sets it.
+    # Privileged sim state: outside the LeRobot dataset by construction, so guard
+    # code cannot reach it. Off by default; every corpus config sets it explicitly.
     privileged: bool = False
     privileged_root: str = "data/privileged"
-    # Selects a backstop.perturb family by name ("clean" == no perturbation, the
-    # week-1 behaviour). `perturbation_kwargs` covers the categorical families
-    # (`absent_target`'s `replacement`, `language_paraphrase`'s `paraphrase`),
-    # which take a supplied value instead of a sampled strength.
+    # Selects a backstop.perturb family by name ("clean" == no perturbation).
+    # `perturbation_kwargs` covers the categorical families (`absent_target`'s
+    # `replacement`, `language_paraphrase`'s `paraphrase`), which take a supplied
+    # value instead of a sampled strength.
     perturbation: str = "clean"
     perturbation_strength: float = Field(default=0.0, ge=0.0, le=1.0)
     perturbation_kwargs: dict[str, Any] = Field(default_factory=dict)

@@ -1,4 +1,4 @@
-"""Frozen week-1 data contracts.
+"""Data contracts for recorded episodes and the headline metric.
 
 These models are the source of truth for recorded episodes and for the
 headline metric. Changing field names, the headline, or the false-stop budget

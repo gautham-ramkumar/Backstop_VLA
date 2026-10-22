@@ -141,7 +141,7 @@ def run_pipeline(cfg: PipelineConfig, timer: StageTimer | None = None) -> dict[s
     write_eval_report(output_dir=output_dir, provenance=provenance, stats=stats)
     write_timing_report(output_dir=output_dir, timing=stats["timing"])
     write_failures_markdown(output_dir / "failures.md", stats["episodes"])
-    # `docs/failures.md` is the week-1 natural-failure list that week-2 review reads.
+    # `docs/failures.md` is the clean run's natural-failure list that review reads.
     # Mirroring every record run into it means the first perturbed shard silently
     # replaces it. Only an unsharded, complete run may write there.
     if cfg.record.enabled and cfg.record.shard is None and not stats.get("partial"):

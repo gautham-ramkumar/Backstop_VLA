@@ -169,7 +169,7 @@ def sim_state(vec_env: Any, index: int = 0) -> Any:
 
     Privileged. Permitted for ground-truth labels, onset annotation, and
     counterfactual branching; forbidden as guard input (ADR-003). It is kept out of
-    the LeRobot dataset so that week-3 signal code cannot reach it by accident.
+    the LeRobot dataset so that guard code cannot reach it by accident.
     """
     import numpy as np  # noqa: PLC0415
 
@@ -185,7 +185,7 @@ def instrument_render(vec_env: Any, timer: Any, index: int = 0) -> bool:
     Rendering is not a separable call from the loop's point of view. Robosuite's
     `MujocoEnv.step` runs the physics substeps and samples the camera observables
     in the same loop, so a stopwatch around `vec_env.step` charges both to one
-    number -- and the two point week 2 in opposite directions, because a
+    number -- and the two point corpus sizing in opposite directions, because a
     render-bound step makes K=4 nearly free while a physics-bound one does not.
 
     The hook wraps the bound `MjSim.render`, which is the exact call each camera

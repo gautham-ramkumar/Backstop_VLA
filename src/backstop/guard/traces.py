@@ -30,7 +30,6 @@ EXCLUDED_SHARDS = frozenset({"language_absent", "object_clean"})
 OBJECT_SHARD = "object_clean"
 
 
-# Every per-step series a trace row carries.
 def as_float(value: object) -> float:
     """A JSON number as float; raises on anything else instead of guessing."""
     if isinstance(value, int | float) and not isinstance(value, bool):

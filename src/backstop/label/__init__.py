@@ -1,4 +1,4 @@
-"""Week-2 review tool: auto proto-labels + a local HTML review page.
+"""Labelling: auto proto-labels, and the pieces of the local review tools.
 
 `signals.py` is pure numpy, testable without a recorded corpus. `extract.py`
 does the I/O -- reading a recorded shard's dataset, privileged sidecar, and

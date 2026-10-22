@@ -1,7 +1,7 @@
 """Perturbation protocol and the RNG discipline every family follows.
 
 A perturbation makes the environment harder in one named way, with a `strength`
-in [0, 1] mapped to family-specific units. Week 2 tunes each family's strength so
+in [0, 1] mapped to family-specific units. Each family's strength is tuned so
 roughly half its episodes still succeed: if a family always fails, a guard trained
 on the corpus learns to detect the perturbation rather than the impending failure,
 and a lighting-shifted image is trivially detectable.
