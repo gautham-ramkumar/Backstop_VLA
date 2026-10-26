@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
+from backstop.corpus.layout import ShardLayout
 from backstop.guard.extract import iter_episode_samples
 from backstop.guard.traces import EXCLUDED_SHARDS, Key, Row, labels_by_key, onset_range
 from backstop.recover.reselect import RESELECT_METRICS, reselect_metrics
@@ -56,16 +57,14 @@ def main() -> None:
     labels = labels_by_key(args.labels)
     matched = onset_step_mask(labels)
     shards = sorted({shard for shard, _ in labels} - EXCLUDED_SHARDS)
+    layout = ShardLayout(lerobot_root=args.lerobot_root, eval_root=args.eval_root)
 
     failure: Pooled = {name: [] for name in RESELECT_METRICS}
     success: Pooled = {name: [] for name in RESELECT_METRICS}
     failure_spread: list[float] = []
     n_success = 0
     for shard in shards:
-        stream = iter_episode_samples(
-            shard, lerobot_root=args.lerobot_root, eval_root=args.eval_root
-        )
-        for episode, samples in stream:
+        for episode, samples in iter_episode_samples(layout, shard):
             row = labels.get((shard, episode))
             if row is None:
                 continue

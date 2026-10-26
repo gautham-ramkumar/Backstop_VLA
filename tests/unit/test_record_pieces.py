@@ -17,8 +17,9 @@ pytest.importorskip("lerobot")
 
 import numpy as np  # noqa: E402
 
+from backstop.corpus.privileged import load_episode  # noqa: E402
 from backstop.policy.base import Processors  # noqa: E402
-from backstop.record.privileged import PrivilegedWriter, load_episode  # noqa: E402
+from backstop.record.privileged import PrivilegedWriter  # noqa: E402
 from backstop.record.sink import EpisodeSink  # noqa: E402
 from backstop.record.step import Decider, Decision  # noqa: E402
 from backstop.record.timing import StageTimer  # noqa: E402

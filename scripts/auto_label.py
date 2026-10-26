@@ -19,14 +19,10 @@ touches a row that already is.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
-from backstop.label.extract import (
-    build_shard_rows,
-    discover_shards,
-    load_labels,
-    merge_rows,
-    write_labels,
-)
+from backstop.corpus.layout import ShardLayout
+from backstop.label.extract import build_shard_rows, load_labels, merge_rows, write_labels
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,7 +35,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--shard", action="append", help="limit to one or more shards (repeatable)")
     args = parser.parse_args(argv)
 
-    shards = args.shard or discover_shards(args.privileged_root)
+    layout = ShardLayout(
+        Path(args.lerobot_root),
+        Path(args.privileged_root),
+        Path(args.eval_root),
+        Path(args.configs_root),
+    )
+    shards = args.shard or layout.discover_shards()
     if not shards:
         print(f"no shards found under {args.privileged_root}")
         return 1
@@ -48,13 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     new_rows = []
     for shard in shards:
         try:
-            rows = build_shard_rows(
-                shard,
-                lerobot_root=args.lerobot_root,
-                privileged_root=args.privileged_root,
-                eval_root=args.eval_root,
-                configs_root=args.configs_root,
-            )
+            rows = build_shard_rows(layout, shard)
         except FileNotFoundError as exc:
             print(f"SKIP {shard}: {exc}")
             continue

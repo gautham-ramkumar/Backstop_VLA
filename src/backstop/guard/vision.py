@@ -18,7 +18,7 @@ from typing import Any
 
 import numpy as np
 
-from backstop.label.extract import load_episode_video_range
+from backstop.corpus.read import load_episode_video_range
 
 DETECTOR_MODEL = "google/owlv2-base-patch16-ensemble"
 

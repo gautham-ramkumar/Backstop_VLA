@@ -24,6 +24,8 @@ from typing import Any
 
 import numpy as np
 
+from backstop.corpus.privileged import episode_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,8 +39,8 @@ class PrivilegedWriter:
     """
 
     def __init__(self, root: str | Path, shard: str | None = None) -> None:
-        self.dir = Path(root) / (shard or "default")
-        self.dir.mkdir(parents=True, exist_ok=True)
+        self.root, self.shard = Path(root), shard
+        episode_path(root, shard, 0).parent.mkdir(parents=True, exist_ok=True)
         self._episode: int | None = None
         self._states: list[np.ndarray] = []
         self._dim: int | None = None
@@ -76,7 +78,7 @@ class PrivilegedWriter:
             raise RuntimeError(
                 f"episode {self._episode} recorded no sim states; the capture hook did not run."
             )
-        path = self.dir / f"{self._episode:06d}.npz"
+        path = episode_path(self.root, self.shard, self._episode)
         states = np.stack(self._states, axis=0)
         tmp = path.with_suffix(".npz.partial")
         with tmp.open("wb") as handle:
@@ -96,10 +98,3 @@ class PrivilegedWriter:
     @property
     def n_steps_open(self) -> int:
         return len(self._states)
-
-
-def load_episode(root: str | Path, shard: str | None, episode_index: int) -> dict[str, np.ndarray]:
-    """Read one sidecar back. Used by labelling, onset annotation and verification."""
-    path = Path(root) / (shard or "default") / f"{episode_index:06d}.npz"
-    with np.load(path) as payload:
-        return {key: payload[key] for key in payload.files}

@@ -14,7 +14,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from backstop.record.privileged import PrivilegedWriter, load_episode
+from backstop.corpus.privileged import load_episode
+from backstop.record.privileged import PrivilegedWriter
 from backstop.schema import lerobot_features
 
 LIBERO_SPATIAL_STATE_DIM = 92

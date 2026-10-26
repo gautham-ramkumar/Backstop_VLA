@@ -44,6 +44,7 @@ from typing import Any
 
 import numpy as np
 
+from backstop.corpus.layout import ShardLayout
 from backstop.env.libero import scene_objects
 from backstop.guard.presence import PresenceGate
 from backstop.guard.scoring import auroc, fit_stopwatch_from_rows
@@ -56,7 +57,6 @@ from backstop.guard.vision import (
     detector_scores,
     first_agentview_frame,
 )
-from backstop.label.extract import resolve_dataset_root
 
 GROCERIES = (
     "alphabet soup",
@@ -209,11 +209,11 @@ def main() -> None:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     rows = load_jsonl(args.traces)
+    layout = ShardLayout(lerobot_root=args.lerobot_root, eval_root=args.eval_root)
     images = []
     for row in rows:
         shard, episode = episode_key(row)
-        root, _ = resolve_dataset_root(args.eval_root, shard, args.lerobot_root)
-        images.append(first_agentview_frame(root, episode))
+        images.append(first_agentview_frame(layout.dataset_root(shard), episode))
     print(f"scoring {len(images)} first frames x {len(NAMES)} object names on {device}")
     matrix = detector_score_matrix(images, list(NAMES))
 

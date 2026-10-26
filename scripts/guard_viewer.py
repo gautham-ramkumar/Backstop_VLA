@@ -18,6 +18,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from backstop.corpus.layout import ShardLayout
 from backstop.guard.traces import Key, Row, episode_key, load_jsonl
 from backstop.label.web import JsonRequestHandler, VideoClips
 
@@ -88,9 +89,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     Handler.state = GuardState(args.traces)
     Handler.assets_dir = ASSETS_DIR
-    Handler.clips = VideoClips(
-        lerobot_root=args.lerobot_root, eval_root=args.eval_root, cache_dir=args.video_cache_dir
-    )
+    layout = ShardLayout(lerobot_root=args.lerobot_root, eval_root=args.eval_root)
+    Handler.clips = VideoClips(layout, args.video_cache_dir)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"Guard viewer: http://127.0.0.1:{args.port}")
     with contextlib.suppress(KeyboardInterrupt):

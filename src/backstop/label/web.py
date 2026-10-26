@@ -22,7 +22,8 @@ import sys
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-from backstop.label.extract import load_episode_video_range, resolve_dataset_root
+from backstop.corpus.layout import ShardLayout
+from backstop.corpus.read import load_episode_video_range
 
 CONTENT_TYPES = {".html": "text/html", ".js": "application/javascript", ".css": "text/css"}
 
@@ -36,9 +37,8 @@ class VideoClips:
     without a codec probe.
     """
 
-    def __init__(self, *, lerobot_root: Path, eval_root: Path, cache_dir: Path) -> None:
-        self.lerobot_root = lerobot_root
-        self.eval_root = eval_root
+    def __init__(self, layout: ShardLayout, cache_dir: Path) -> None:
+        self.layout = layout
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -46,8 +46,9 @@ class VideoClips:
         cache_path = self.cache_dir / shard / f"{episode_index:06d}.mp4"
         if cache_path.is_file():
             return cache_path
-        dataset_path, _provenance = resolve_dataset_root(self.eval_root, shard, self.lerobot_root)
-        source_video, from_ts, to_ts = load_episode_video_range(dataset_path, episode_index)
+        source_video, from_ts, to_ts = load_episode_video_range(
+            self.layout.dataset_root(shard), episode_index
+        )
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = cache_path.with_suffix(".mp4.partial")
         cmd = [

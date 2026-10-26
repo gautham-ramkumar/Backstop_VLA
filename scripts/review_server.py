@@ -20,6 +20,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from backstop.corpus.layout import ShardLayout
 from backstop.label.extract import load_labels, mark_reviewed, write_labels
 from backstop.label.web import JsonRequestHandler, VideoClips
 
@@ -172,11 +173,8 @@ def main(argv: list[str] | None = None) -> int:
 
     Handler.store = Store(labels_path)
     Handler.assets_dir = ASSETS_DIR
-    Handler.clips = VideoClips(
-        lerobot_root=Path(args.lerobot_root),
-        eval_root=Path(args.eval_root),
-        cache_dir=Path(args.video_cache_dir),
-    )
+    layout = ShardLayout(lerobot_root=Path(args.lerobot_root), eval_root=Path(args.eval_root))
+    Handler.clips = VideoClips(layout, Path(args.video_cache_dir))
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"Review tool: http://127.0.0.1:{args.port}")
     with contextlib.suppress(KeyboardInterrupt):

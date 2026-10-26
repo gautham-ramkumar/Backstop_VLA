@@ -43,10 +43,7 @@ ALLOWED: dict[str, frozenset[str]] = {
     "record": FOUNDATION | {"env", "policy", "perturb", "corpus", "guard", "recover"},
     "eval": FOUNDATION | {"record", "env", "policy"},
 }
-KNOWN_VIOLATIONS: dict[tuple[str, str], str] = {
-    ("guard", "label"): "Stage 1: dataset discovery and reading move to backstop.corpus",
-    ("label", "record"): "Stage 1: the privileged-sidecar reader moves to backstop.corpus",
-}
+KNOWN_VIOLATIONS: dict[tuple[str, str], str] = {}
 KNOWN_SCRIPT_IMPORTS: dict[tuple[str, str], str] = {}
 # Must never be imported by the analysis packages: they run on the CPU job,
 # without the simulator, the policy or a GPU.

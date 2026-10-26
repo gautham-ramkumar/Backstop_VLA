@@ -33,7 +33,7 @@ pytest.importorskip("lerobot")
 
 import numpy as np  # noqa: E402
 
-from backstop.record.privileged import load_episode  # noqa: E402
+from backstop.corpus.privileged import load_episode  # noqa: E402
 from fakes.rollout import run_fake_rollout  # noqa: E402
 
 GOLDEN = Path(__file__).parent / "golden" / "rollout.json"

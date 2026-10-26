@@ -26,6 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
+from backstop.corpus.layout import ShardLayout
 from backstop.eval.report import write_secondary_report
 from backstop.guard.calibrate import bootstrap_rates
 from backstop.guard.calibrate import evaluate as eval_metrics
@@ -245,9 +246,7 @@ def main(argv: list[str] | None = None) -> int:
 
     contract = load_metric_contract()
     by_shard = load_corpus_signals(
-        lerobot_root=args.lerobot_root,
-        privileged_root=args.privileged_root,
-        eval_root=args.eval_root,
+        ShardLayout(args.lerobot_root, args.privileged_root, args.eval_root)
     )
     if not by_shard:
         print(f"no shards found under {args.privileged_root}")

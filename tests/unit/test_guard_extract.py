@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 
 import pytest
 
+from backstop.corpus.layout import ShardLayout
 from backstop.guard.extract import load_corpus_signals
+from backstop.schema import RunProvenance
 
 
 def _roots(tmp_path: Path, shards: dict[str, str | None]) -> dict[str, Path]:
@@ -21,16 +22,35 @@ def _roots(tmp_path: Path, shards: dict[str, str | None]) -> dict[str, Path]:
         if dataset_root is not None:
             run_dir = roots["eval"] / f"spatial_{shard}_k4"
             run_dir.mkdir()
-            (run_dir / "run.json").write_text(json.dumps({"dataset_root": dataset_root}))
+            (run_dir / "run.json").write_text(_run_json(dataset_root))
     return roots
 
 
-def _load(roots: dict[str, Path]) -> dict[str, list]:
-    return load_corpus_signals(
-        lerobot_root=roots["lerobot"],
-        privileged_root=roots["privileged"],
-        eval_root=roots["eval"],
+def _run_json(dataset_root: str) -> str:
+    provenance = RunProvenance(
+        git_sha=None,
+        policy_path="org/policy",
+        policy_revision=None,
+        policy_type="smolvla",
+        device="cpu",
+        mujoco_version=None,
+        mujoco_gl="osmesa",
+        seed=0,
+        suite="libero_spatial",
+        task_ids=None,
+        n_episodes=1,
+        n_action_steps=1,
+        num_steps=10,
+        k_samples=4,
+        batch_size=1,
+        dataset_root=dataset_root,
+        output_dir="out",
     )
+    return provenance.model_dump_json()
+
+
+def _load(roots: dict[str, Path]) -> dict[str, list]:
+    return load_corpus_signals(ShardLayout(roots["lerobot"], roots["privileged"], roots["eval"]))
 
 
 def test_a_shard_without_run_json_is_skipped_with_a_warning(
