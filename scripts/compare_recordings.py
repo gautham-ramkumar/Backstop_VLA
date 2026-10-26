@@ -57,7 +57,7 @@ def record(config: Path, out: Path) -> None:
     run_config.write_text(yaml.safe_dump(redirected_config(config, out), sort_keys=False))
     with (out / "record.log").open("w") as log:
         subprocess.run(
-            [sys.executable, "-m", "backstop.record.cli", "--config", str(run_config)],
+            [sys.executable, "-m", "backstop.eval.cli", "--record", "--config", str(run_config)],
             stdout=log,
             stderr=subprocess.STDOUT,
             check=True,

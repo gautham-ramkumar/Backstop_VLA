@@ -33,6 +33,10 @@ eval-spatial:
 record-spatial:
 	uv run backstop-record --config configs/record/spatial_baseline.yaml
 
+# Copy a complete, unsharded clean run's natural failures to docs/failures.md, the list review reads.
+publish-failures run="artifacts/eval/spatial_baseline":
+	cp {{run}}/failures.md docs/failures.md
+
 benchmark:
 	uv run python scripts/benchmark_throughput.py --k 1,4 --episodes 3
 

@@ -189,7 +189,7 @@ def _config(k: int, args: argparse.Namespace, out_dir: Path, *, episodes: int, t
     cfg.record.root = str(BENCH_ROOT / f"k{k}_{tag}")
     cfg.record.repo_id = f"local/backstop_benchmark_k{k}_{tag}"
     cfg.record.on_existing = "overwrite"
-    # Named shard, so a benchmark run can never overwrite docs/failures.md.
+    # Named shard, so its sim-state sidecars land in a directory of their own.
     cfg.record.shard = f"benchmark_k{k}"
     # Every week-2 corpus shard captures sim state, so a benchmark that skipped it
     # would price a run nobody is going to make. Under the bench root, so the

@@ -53,7 +53,8 @@ uv run backstop-record --config configs/record/spatial_baseline.yaml
 
 - `artifacts/eval/<run>/eval.json` — policy success rate + provenance
 - `artifacts/eval/<run>/run.json` — pins (git, MuJoCo, policy revision, seed)
-- `artifacts/eval/<run>/failures.md` — natural failures to watch
+- `artifacts/eval/<run>/failures.md` — natural failures to watch. After a complete clean
+  baseline, `just publish-failures` copies it to `docs/failures.md`, the list review reads
 - `data/lerobot/backstop_spatial_smoke/` or `.../backstop_spatial_baseline/` — LeRobot v3 dataset
 - W&B: project `backstop`, default mode **offline** (no API key required)
 

@@ -36,7 +36,7 @@ dev = [
 
 [project.scripts]
 backstop-eval = "backstop.eval.cli:main"
-backstop-record = "backstop.record.cli:main"
+backstop-record = "backstop.eval.cli:record_main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/backstop"]
