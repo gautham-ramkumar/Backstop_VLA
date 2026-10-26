@@ -16,9 +16,10 @@ from pathlib import Path
 
 import numpy as np
 
+from backstop.corpus.episode import EpisodeKey
 from backstop.corpus.layout import ShardLayout
 from backstop.guard.extract import iter_episode_samples
-from backstop.guard.traces import EXCLUDED_SHARDS, Key, Row, labels_by_key, onset_range
+from backstop.guard.traces import EXCLUDED_SHARDS, LabelView, load_labels
 from backstop.recover.reselect import RESELECT_METRICS, reselect_metrics
 
 Pooled = dict[str, list[float]]
@@ -35,14 +36,12 @@ def _summary(values: list[float]) -> dict[str, float]:
     }
 
 
-def onset_step_mask(labels: dict[Key, Row]) -> np.ndarray:
+def onset_step_mask(labels: dict[EpisodeKey, LabelView]) -> np.ndarray:
     """True at every step index inside at least one failure's onset window."""
-    n_steps = max(int(row["n_steps"]) for row in labels.values())  # type: ignore[arg-type]
-    mask = np.zeros(n_steps, dtype=bool)
-    for shard, episode in labels:
-        onset = onset_range(labels, shard, episode)
-        if onset is not None and not labels[(shard, episode)]["success"]:
-            mask[onset[0] : onset[1] + 1] = True
+    mask = np.zeros(max(label.n_steps for label in labels.values()), dtype=bool)
+    for label in labels.values():
+        if label.onset_range is not None and not label.success:
+            mask[label.onset_range[0] : label.onset_range[1] + 1] = True
     return mask
 
 
@@ -54,7 +53,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("artifacts/recovery/pretest.json"))
     args = parser.parse_args()
 
-    labels = labels_by_key(args.labels)
+    labels = load_labels(args.labels)
     matched = onset_step_mask(labels)
     shards = sorted({shard for shard, _ in labels} - EXCLUDED_SHARDS)
     layout = ShardLayout(lerobot_root=args.lerobot_root, eval_root=args.eval_root)
@@ -65,18 +64,18 @@ def main() -> None:
     n_success = 0
     for shard in shards:
         for episode, samples in iter_episode_samples(layout, shard):
-            row = labels.get((shard, episode))
-            if row is None:
+            label = labels.get(EpisodeKey(shard, episode))
+            if label is None:
                 continue
             metrics = reselect_metrics(samples)
-            if row["success"]:
+            if label.success:
                 # Good runs at matched steps: those inside any failure's onset window.
                 n_success += 1
                 mask = matched[: samples.shape[0]]
                 for name, values in metrics.items():
                     success[name].extend(values[mask].tolist())
                 continue
-            onset = onset_range(labels, shard, episode)
+            onset = label.onset_range
             if onset is None:
                 continue
             window = slice(onset[0], onset[1] + 1)

@@ -44,14 +44,15 @@ from typing import Any
 
 import numpy as np
 
+from backstop.corpus.episode import EpisodeKey
 from backstop.corpus.layout import ShardLayout
 from backstop.env.libero import scene_objects
 from backstop.guard.presence import PresenceGate
 from backstop.guard.scoring import auroc, fit_stopwatch_from_rows
 from backstop.guard.signals import instructed_object_phrase
-from backstop.guard.split import EpisodeKey, stratified_split
+from backstop.guard.split import stratified_split
 from backstop.guard.stopwatch import stop_step
-from backstop.guard.traces import OBJECT_SHARD, episode_key, load_jsonl, series_map, spatial_pool
+from backstop.guard.traces import OBJECT_SHARD, TraceRow, load_traces, series_map, spatial_pool
 from backstop.guard.vision import (
     detector_score_matrix,
     detector_scores,
@@ -74,15 +75,15 @@ NAMES = ("black bowl", "moka pot", *GROCERIES)
 BUDGET = 0.05
 
 
-def _scene_objects(rows: list[dict[str, Any]]) -> list[set[str]]:
+def _scene_objects(rows: list[TraceRow]) -> list[set[str]]:
     """Objects in each corpus frame's scene, from the LIBERO task files."""
     spatial = set(scene_objects("libero_spatial", 0)[1])
     by_task = dict(scene_objects("libero_object", task_id) for task_id in range(10))
     out = []
     for row in rows:
-        if row["shard"] == OBJECT_SHARD:
-            out.append(set(by_task[row["task"]]))
-        elif row["shard"] == "distractor":
+        if row.shard == OBJECT_SHARD:
+            out.append(set(by_task[row.task]))
+        elif row.shard == "distractor":
             out.append(spatial | {"milk"})
         else:
             out.append(set(spatial))
@@ -94,7 +95,7 @@ def _rate(flags: np.ndarray) -> dict[str, float | int]:
 
 
 def gate_report(
-    rows: list[dict[str, Any]],
+    rows: list[TraceRow],
     matrix: np.ndarray,
     objects: list[set[str]],
     reference_scores: dict[str, np.ndarray],
@@ -103,16 +104,16 @@ def gate_report(
     seed: int,
 ) -> dict[str, object]:
     column = {name: j for j, name in enumerate(NAMES)}
-    phrases = [instructed_object_phrase(row["task"]) for row in rows]
-    key = [EpisodeKey(row["shard"], row["episode_index"]) for row in rows]
-    spatial_family = np.array([row["shard"] != OBJECT_SHARD for row in rows])
+    phrases = [instructed_object_phrase(row.task) for row in rows]
+    key = [row.key for row in rows]
+    spatial_family = np.array([row.shard != OBJECT_SHARD for row in rows])
 
     references: dict[str, np.ndarray] = {}
     used_as_reference = np.zeros(len(rows), dtype=bool)
     bowl = [
         i
         for i, row in enumerate(rows)
-        if row["success"] and key[i] in split_calibration and row["shard"] != "language_absent"
+        if row.success and key[i] in split_calibration and row.shard != "language_absent"
     ]
     references["black bowl"] = matrix[bowl, column["black bowl"]]
     used_as_reference[bowl] = True
@@ -124,9 +125,9 @@ def gate_report(
         # open on near-identical layouts, so a frame split would put copies
         # of the same scene on both sides and flatter the held-out rate.
         frames = np.flatnonzero(~spatial_family & np.array([name in o for o in objects]))
-        tasks = sorted({str(rows[i]["task"]) for i in frames})
+        tasks = sorted({rows[i].task for i in frames})
         reference_tasks = set(rng.permutation(tasks)[: len(tasks) // 2].tolist())
-        in_reference = np.array([str(rows[i]["task"]) in reference_tasks for i in frames])
+        in_reference = np.array([rows[i].task in reference_tasks for i in frames])
         references[name] = matrix[frames[in_reference], column[name]]
         held_out_present[name] = frames[~in_reference]
         instructed = [i for i in frames[in_reference] if phrases[i] == name]
@@ -136,14 +137,14 @@ def gate_report(
     def verdict(i: int, name: str) -> str:
         return gate.check(name, float(matrix[i, column[name]]))
 
-    absent = [i for i, row in enumerate(rows) if row["shard"] == "language_absent"]
+    absent = [i for i, row in enumerate(rows) if row.shard == "language_absent"]
     spatial_good = [
         i
         for i, row in enumerate(rows)
-        if row["success"] and key[i] in split_eval and row["shard"] != "language_absent"
+        if row.success and key[i] in split_eval and row.shard != "language_absent"
     ]
     object_runs = [
-        i for i, row in enumerate(rows) if row["shard"] == OBJECT_SHARD and not used_as_reference[i]
+        i for i, row in enumerate(rows) if row.shard == OBJECT_SHARD and not used_as_reference[i]
     ]
     guard = {
         "missing_moka_pot_stopped": _rate(
@@ -208,12 +209,11 @@ def main() -> None:
     import torch  # noqa: PLC0415
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    rows = load_jsonl(args.traces)
+    rows = load_traces(args.traces)
     layout = ShardLayout(lerobot_root=args.lerobot_root, eval_root=args.eval_root)
     images = []
     for row in rows:
-        shard, episode = episode_key(row)
-        images.append(first_agentview_frame(layout.dataset_root(shard), episode))
+        images.append(first_agentview_frame(layout.dataset_root(row.shard), row.episode_index))
     print(f"scoring {len(images)} first frames x {len(NAMES)} object names on {device}")
     matrix = detector_score_matrix(images, list(NAMES))
 
@@ -226,7 +226,7 @@ def main() -> None:
 
     spatial = spatial_pool(rows)
     split = stratified_split(
-        [(*episode_key(row), bool(row["success"])) for row in spatial],
+        [(row.shard, row.episode_index, row.success) for row in spatial],
         eval_fraction=args.eval_fraction,
         seed=args.seed,
     )
@@ -250,7 +250,7 @@ def main() -> None:
 
 
 def headline_guard_on_missing(
-    rows: list[dict[str, Any]],
+    rows: list[TraceRow],
     calibration: frozenset[EpisodeKey],
     eval_fraction: float,
     seed: int,
@@ -260,13 +260,11 @@ def headline_guard_on_missing(
     The gate decides at step 0. Disagreement OR stopwatch, fit on the same
     spatial calibration successes, has to wait for the policy to waver.
     """
-    calibration_rows = [
-        row for row in rows if EpisodeKey(row["shard"], row["episode_index"]) in calibration
-    ]
-    absent = [row for row in rows if row["shard"] == "language_absent"]
+    calibration_rows = [row for row in rows if row.key in calibration]
+    absent = [row for row in rows if row.shard == "language_absent"]
     series = series_map(calibration_rows + absent, "action_chunk_disagreement")
     rule = fit_stopwatch_from_rows(calibration_rows, series, BUDGET)
-    steps = [stop_step(series[episode_key(row)], int(row["n_steps"]), rule) for row in absent]
+    steps = [stop_step(series[row.key], row.n_steps, rule) for row in absent]
     caught = np.array([step for step in steps if step is not None], dtype=np.float64)
     return {
         "guard": "action_chunk_disagreement OR stopwatch",

@@ -30,9 +30,9 @@ from backstop.corpus.layout import ShardLayout
 from backstop.eval.report import write_secondary_report
 from backstop.guard.calibrate import bootstrap_rates
 from backstop.guard.calibrate import evaluate as eval_metrics
-from backstop.guard.extract import SIGNAL, EpisodeSignal, load_corpus_signals
+from backstop.guard.extract import SIGNAL, load_corpus_signals
 from backstop.guard.summarize import report_signal
-from backstop.guard.traces import as_float
+from backstop.guard.traces import TraceRow, write_traces
 from backstop.schema import DETECTION_METRIC, load_metric_contract
 
 QUARANTINED_SHARDS = frozenset({"language_absent"})
@@ -40,28 +40,8 @@ QUARANTINED_SHARDS = frozenset({"language_absent"})
 HOLDOUT_SHARDS = frozenset({"object_clean"})
 
 
-def _write_traces(path: Path, episodes: list[EpisodeSignal]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as handle:
-        for episode in episodes:
-            per_step = {
-                name: [float(value) for value in scores]
-                for name, scores in episode.per_step.items()
-            }
-            row = {
-                "shard": episode.shard,
-                "episode_index": episode.episode_index,
-                "success": episode.success,
-                "n_steps": episode.n_steps,
-                "task": episode.task,
-                "scores": episode.scores,
-                "per_step": per_step,
-            }
-            handle.write(json.dumps(row) + "\n")
-
-
 def _score_holdout(
-    episodes: list[EpisodeSignal], scores: list[float], threshold: float, *, seed: int
+    episodes: list[TraceRow], scores: list[float], threshold: float, *, seed: int
 ) -> dict[str, object]:
     """Frozen-threshold numbers for a held-out shard. Every episode is eval."""
     success = np.asarray(
@@ -270,7 +250,8 @@ def main(argv: list[str] | None = None) -> int:
         eval_fraction=args.eval_fraction,
         seed=args.seed,
     )
-    threshold = as_float(values["threshold"])
+    threshold = values["threshold"]
+    assert isinstance(threshold, float)
     quarantine_report = {}
     if quarantined:
         metrics = eval_metrics(
@@ -328,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
 
     all_episodes = [episode for episodes in by_shard.values() for episode in episodes]
     trace_path = args.output_dir / "traces.jsonl"
-    _write_traces(trace_path, all_episodes)
+    write_traces(trace_path, all_episodes)
     print(f"wrote {trace_path}")
 
     text = _splice(args.report_path, _markdown(reports, holdout))

@@ -34,7 +34,7 @@ import numpy as np
 from backstop.guard.online import save_rule
 from backstop.guard.scoring import fit_stopwatch_from_rows
 from backstop.guard.stopwatch import stop_step
-from backstop.guard.traces import episode_key, load_jsonl, series_map, spatial_pool
+from backstop.guard.traces import load_traces, series_map, spatial_pool
 from backstop.provenance import file_sha256, git_dirty, git_sha
 
 SIGNAL = "action_chunk_disagreement"
@@ -54,17 +54,14 @@ def main() -> None:
     parser.add_argument("--budget", type=float, action="append", default=None)
     args = parser.parse_args()
 
-    traces = load_jsonl(args.traces)
-    calibration = [row for row in spatial_pool(traces) if row["shard"] not in NOT_CALIBRATION]
-    target = sorted(
-        (row for row in traces if row["shard"] == TARGET_SHARD),
-        key=episode_key,
-    )
+    traces = load_traces(args.traces)
+    calibration = [row for row in spatial_pool(traces) if row.shard not in NOT_CALIBRATION]
+    target = sorted((row for row in traces if row.shard == TARGET_SHARD), key=lambda row: row.key)
     series = series_map(calibration + target, SIGNAL)
     provenance = {
         "signal": SIGNAL,
-        "calibration_shards": sorted({str(row["shard"]) for row in calibration}),
-        "n_calibration_successes": sum(bool(row["success"]) for row in calibration),
+        "calibration_shards": sorted({row.shard for row in calibration}),
+        "n_calibration_successes": sum(row.success for row in calibration),
         "target_shard": TARGET_SHARD,
         "traces": str(args.traces),
         "traces_sha256": file_sha256(args.traces),
@@ -76,14 +73,10 @@ def main() -> None:
         rule = fit_stopwatch_from_rows(calibration, series, budget)
         triggers = [
             {
-                "episode_index": int(row["episode_index"]),  # type: ignore[arg-type]
-                "success": bool(row["success"]),
-                "n_steps": int(row["n_steps"]),  # type: ignore[arg-type]
-                "trigger_step": stop_step(
-                    series[episode_key(row)],
-                    int(row["n_steps"]),  # type: ignore[arg-type]
-                    rule,
-                ),
+                "episode_index": row.episode_index,
+                "success": row.success,
+                "n_steps": row.n_steps,
+                "trigger_step": stop_step(series[row.key], row.n_steps, rule),
             }
             for row in target
         ]

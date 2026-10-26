@@ -34,17 +34,17 @@ from pathlib import Path
 
 import numpy as np
 
+from backstop.corpus.episode import EpisodeKey
 from backstop.eval.report import write_guard_report
 from backstop.guard.scoring import auroc, fit_stopwatch_from_rows
 from backstop.guard.stopwatch import StopwatchRule, stop_step
 from backstop.guard.traces import (
     FPS,
     OBJECT_SHARD,
-    Row,
-    as_int,
-    episode_key,
-    labels_by_key,
-    load_jsonl,
+    LabelView,
+    TraceRow,
+    load_labels,
+    load_traces,
     onset_range,
     series_map,
     spatial_pool,
@@ -59,45 +59,37 @@ HEADLINE_GUARD = f"{SIGNAL} OR stopwatch"
 SIGNALS = (SIGNAL,)
 
 
-def _scores(row: Row) -> dict[str, float]:
-    return row["scores"]  # type: ignore[return-value]
-
-
-def _per_step(row: Row, name: str) -> np.ndarray:
-    return np.asarray(row["per_step"][name], dtype=np.float64)  # type: ignore[index]
-
-
-def separability(spatial: list[Row]) -> list[dict[str, float]]:
-    failures = [row for row in spatial if not row["success"]]
-    successes = [row for row in spatial if row["success"]]
+def separability(spatial: list[TraceRow]) -> list[dict[str, float]]:
+    failures = [row for row in spatial if not row.success]
+    successes = [row for row in spatial if row.success]
     table = []
     for t in (10, 20, 30, 40, 50, 60, 80, 100, 120):
-        alive = [row for row in successes if int(row["n_steps"]) > t]  # type: ignore[arg-type]
+        alive = [row for row in successes if row.n_steps > t]
         entry: dict[str, float | None] = {"step": t, "n_success_running": len(alive)}
         for name in SIGNALS:
             entry[name] = auroc(
-                [float(_per_step(row, name)[:t].max()) for row in failures],
-                [float(_per_step(row, name)[:t].max()) for row in alive],
+                [float(row.series(name)[:t].max()) for row in failures],
+                [float(row.series(name)[:t].max()) for row in alive],
             )
         table.append(entry)
     return table
 
 
-def perturbation_check(spatial: list[Row]) -> dict[str, dict[str, object]]:
-    clean = [row for row in spatial if row["shard"] == "clean" and row["success"]]
-    families = sorted({str(row["shard"]) for row in spatial} - {"clean"})
+def perturbation_check(spatial: list[TraceRow]) -> dict[str, dict[str, object]]:
+    clean = [row for row in spatial if row.shard == "clean" and row.success]
+    families = sorted({row.shard for row in spatial} - {"clean"})
     out: dict[str, dict[str, object]] = {}
     for family in families:
-        good = [row for row in spatial if row["shard"] == family and row["success"]]
-        bad = [row for row in spatial if row["shard"] == family and not row["success"]]
+        good = [row for row in spatial if row.shard == family and row.success]
+        bad = [row for row in spatial if row.shard == family and not row.success]
         entry: dict[str, object] = {"n_success": len(good), "n_failure": len(bad)}
         for name in SIGNALS:
             entry[name] = {
                 "perturbed_success_vs_clean_success": auroc(
-                    [_scores(row)[name] for row in good], [_scores(row)[name] for row in clean]
+                    [row.scores[name] for row in good], [row.scores[name] for row in clean]
                 ),
                 "failure_vs_success": auroc(
-                    [_scores(row)[name] for row in bad], [_scores(row)[name] for row in good]
+                    [row.scores[name] for row in bad], [row.scores[name] for row in good]
                 ),
             }
         out[family] = entry
@@ -105,10 +97,10 @@ def perturbation_check(spatial: list[Row]) -> dict[str, dict[str, object]]:
 
 
 def _apply(
-    rows: list[Row],
-    series: dict[tuple[str, int], np.ndarray],
+    rows: list[TraceRow],
+    series: dict[EpisodeKey, np.ndarray],
     rule: StopwatchRule,
-    labels: dict[tuple[str, int], Row],
+    labels: dict[EpisodeKey, LabelView],
 ) -> dict[str, float]:
     false_stops = 0
     successes = 0
@@ -116,17 +108,15 @@ def _apply(
     signal_first = 0
     leads: list[float] = []
     for row in rows:
-        key = episode_key(row)
-        n_steps = int(row["n_steps"])  # type: ignore[arg-type]
-        step = stop_step(series[key], n_steps, rule)
-        if row["success"]:
+        step = stop_step(series[row.key], row.n_steps, rule)
+        if row.success:
             successes += 1
             false_stops += int(step is not None)
             continue
         assert step is not None, "a 280-step failure always outlasts the clock"
         stops.append(step)
         signal_first += int(step < rule.stop_step)
-        onset = onset_range(labels, *key)
+        onset = onset_range(labels, row.key)
         if onset is not None:
             leads.append(float(onset[0] - step))
     return {
@@ -164,8 +154,8 @@ def _summary(runs: list[dict[str, float]], budget: float) -> dict[str, float]:
 
 
 def budget_drift(
-    pooled: list[Row],
-    labels: dict[tuple[str, int], Row],
+    pooled: list[TraceRow],
+    labels: dict[EpisodeKey, LabelView],
     seeds: int,
     eval_fraction: float,
     budget: float,
@@ -175,12 +165,9 @@ def budget_drift(
     for seed in range(seeds):
         calibration, eval_eps = split_halves(pooled, eval_fraction=eval_fraction, seed=seed)
         series = series_map(calibration + eval_eps, SIGNAL)
-        clock_only = {
-            episode_key(row): np.full(as_int(row["n_steps"]), -np.inf)
-            for row in calibration + eval_eps
-        }
-        good = [row for row in calibration if row["success"]]
-        lengths = np.array([int(row["n_steps"]) for row in good])  # type: ignore[arg-type]
+        clock_only = {row.key: np.full(row.n_steps, -np.inf) for row in calibration + eval_eps}
+        good = [row for row in calibration if row.success]
+        lengths = np.array([row.n_steps for row in good])
         k = int(np.ceil(budget * len(good)))
         clock_rule = StopwatchRule(
             line=np.inf,
@@ -200,15 +187,15 @@ def budget_drift(
 
 
 def object_recalibration(
-    traces: list[Row],
-    pooled: list[Row],
-    labels: dict[tuple[str, int], Row],
+    traces: list[TraceRow],
+    pooled: list[TraceRow],
+    labels: dict[EpisodeKey, LabelView],
     budget: float,
     draws: int,
 ) -> dict[str, object]:
-    obj = [row for row in traces if row["shard"] == OBJECT_SHARD]
-    good = [row for row in obj if row["success"]]
-    bad = [row for row in obj if not row["success"]]
+    obj = [row for row in traces if row.shard == OBJECT_SHARD]
+    good = [row for row in obj if row.success]
+    bad = [row for row in obj if not row.success]
     out: dict[str, object] = {}
     rng = np.random.default_rng(0)
     for name in SIGNALS:
@@ -296,8 +283,8 @@ def main() -> None:
     parser.add_argument("--draws", type=int, default=200)
     args = parser.parse_args()
 
-    traces = load_jsonl(args.traces)
-    labels = labels_by_key(args.labels)
+    traces = load_traces(args.traces)
+    labels = load_labels(args.labels)
     pooled = spatial_pool(traces)
 
     report: dict[str, object] = {

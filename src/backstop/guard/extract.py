@@ -10,31 +10,18 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
-from dataclasses import dataclass
 
 import numpy as np
 
 from backstop.corpus.layout import ShardLayout
 from backstop.corpus.read import feature_shape, iter_episode_columns, load_episode_meta
 from backstop.guard.signals import action_chunk_disagreement, episode_score
+from backstop.guard.traces import TraceRow
 from backstop.parquet_io import as_array
 
 logger = logging.getLogger(__name__)
 
 SIGNAL = "action_chunk_disagreement"
-
-
-@dataclass(frozen=True)
-class EpisodeSignal:
-    shard: str
-    episode_index: int
-    success: bool
-    n_steps: int
-    task: str
-    scores: dict[str, float]
-    per_step: dict[str, np.ndarray]
-    perturbation: str
-    perturbation_strength: float
 
 
 def iter_episode_samples(layout: ShardLayout, shard: str) -> Iterator[tuple[int, np.ndarray]]:
@@ -45,10 +32,8 @@ def iter_episode_samples(layout: ShardLayout, shard: str) -> Iterator[tuple[int,
         yield index, as_array(rows["action_chunk_samples"], shape)
 
 
-def load_shard_signals(layout: ShardLayout, shard: str) -> list[EpisodeSignal]:
+def load_shard_signals(layout: ShardLayout, shard: str) -> list[TraceRow]:
     dataset_path = layout.dataset_root(shard)
-    provenance = layout.provenance(shard)
-    assert provenance is not None  # dataset_root raised otherwise
     shape = feature_shape(dataset_path, "action_chunk_samples")
     tasks = load_episode_meta(dataset_path)
 
@@ -58,7 +43,7 @@ def load_shard_signals(layout: ShardLayout, shard: str) -> list[EpisodeSignal]:
         samples = as_array(rows["action_chunk_samples"], shape)
         per_step = {SIGNAL: action_chunk_disagreement(samples)}
         results.append(
-            EpisodeSignal(
+            TraceRow(
                 shard=shard,
                 episode_index=index,
                 success=any(bool(flag) for flag in rows["next.success"]),
@@ -66,8 +51,6 @@ def load_shard_signals(layout: ShardLayout, shard: str) -> list[EpisodeSignal]:
                 task=str(tasks.get(index, {}).get("task", "")),
                 scores={SIGNAL: episode_score(per_step[SIGNAL])},
                 per_step=per_step,
-                perturbation=provenance.perturbation,
-                perturbation_strength=provenance.perturbation_strength,
             )
         )
     return sorted(results, key=lambda episode: episode.episode_index)
@@ -75,7 +58,7 @@ def load_shard_signals(layout: ShardLayout, shard: str) -> list[EpisodeSignal]:
 
 def load_corpus_signals(
     layout: ShardLayout, shards: list[str] | None = None
-) -> dict[str, list[EpisodeSignal]]:
+) -> dict[str, list[TraceRow]]:
     """shard -> its episodes' signals.
 
     A shard with no `run.json` is skipped with a warning: that is a directory
@@ -85,7 +68,7 @@ def load_corpus_signals(
     raises, so corpus rows cannot silently drop out of a report.
     """
     shard_names = shards if shards is not None else layout.discover_shards()
-    by_shard: dict[str, list[EpisodeSignal]] = {}
+    by_shard: dict[str, list[TraceRow]] = {}
     skipped: list[str] = []
     for shard in shard_names:
         if layout.provenance(shard) is None:

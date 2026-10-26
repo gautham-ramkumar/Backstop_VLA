@@ -8,18 +8,19 @@ from the taxonomy, which this module does not read.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Sequence, Set
 
 import numpy as np
 
+from backstop.corpus.episode import EpisodeKey
 from backstop.guard.calibrate import (
     bootstrap_rates,
     calibrate_threshold,
     detection_curve,
     evaluate,
 )
-from backstop.guard.extract import EpisodeSignal
 from backstop.guard.split import stratified_kfold, stratified_split
+from backstop.guard.traces import TraceRow
 from backstop.schema import MetricContract
 
 CURVE_BUDGETS = [0.01, 0.02, 0.05, 0.10, 0.20, 0.50]
@@ -30,33 +31,30 @@ LEAD_TIME_NOTE = (
 
 
 def _score_array(
-    episodes: Sequence[EpisodeSignal],
+    episodes: Sequence[TraceRow],
     name: str,
     *,
-    keys: set[tuple[str, int]] | None,
+    keys: Set[EpisodeKey] | None,
     success: bool,
 ) -> np.ndarray:
     selected = [
         episode.scores[name]
         for episode in episodes
-        if episode.success == success
-        and (keys is None or (episode.shard, episode.episode_index) in keys)
+        if episode.success == success and (keys is None or episode.key in keys)
     ]
     return np.asarray(selected, dtype=np.float64)
 
 
 def _per_family(
-    episodes: Sequence[EpisodeSignal],
+    episodes: Sequence[TraceRow],
     name: str,
-    eval_keys: set[tuple[str, int]],
+    eval_keys: Set[EpisodeKey],
     threshold: float,
 ) -> dict[str, dict[str, float | int]]:
     table: dict[str, dict[str, float | int]] = {}
     for shard in sorted({episode.shard for episode in episodes}):
         shard_eval = [
-            episode
-            for episode in episodes
-            if episode.shard == shard and (episode.shard, episode.episode_index) in eval_keys
+            episode for episode in episodes if episode.shard == shard and episode.key in eval_keys
         ]
         metrics = evaluate(
             _score_array(shard_eval, name, keys=None, success=True),
@@ -73,7 +71,7 @@ def _per_family(
 
 
 def _cross_validation(
-    episodes: Sequence[EpisodeSignal],
+    episodes: Sequence[TraceRow],
     name: str,
     *,
     budget: float,
@@ -87,8 +85,7 @@ def _cross_validation(
     )
     rates: list[float] = []
     for split in splits:
-        calib_keys = {(key.shard, key.episode_index) for key in split.calibration}
-        eval_keys = {(key.shard, key.episode_index) for key in split.eval}
+        calib_keys, eval_keys = split.calibration, split.eval
         calib_success = _score_array(episodes, name, keys=calib_keys, success=True)
         if calib_success.size == 0 or not split.eval:
             continue
@@ -111,7 +108,7 @@ def _cross_validation(
 
 
 def report_signal(
-    episodes: Sequence[EpisodeSignal],
+    episodes: Sequence[TraceRow],
     name: str,
     *,
     metric: MetricContract,
@@ -126,8 +123,7 @@ def report_signal(
         eval_fraction=eval_fraction,
         seed=seed,
     )
-    calib_keys = {(key.shard, key.episode_index) for key in split.calibration}
-    eval_keys = {(key.shard, key.episode_index) for key in split.eval}
+    calib_keys, eval_keys = split.calibration, split.eval
     calib_success = _score_array(episodes, name, keys=calib_keys, success=True)
     eval_success = _score_array(episodes, name, keys=eval_keys, success=True)
     eval_failure = _score_array(episodes, name, keys=eval_keys, success=False)

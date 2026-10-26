@@ -16,11 +16,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-
-@dataclass(frozen=True)
-class EpisodeKey:
-    shard: str
-    episode_index: int
+from backstop.corpus.episode import EpisodeKey
 
 
 @dataclass(frozen=True)

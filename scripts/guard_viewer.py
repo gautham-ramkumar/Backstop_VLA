@@ -18,8 +18,9 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from backstop.corpus.episode import EpisodeKey
 from backstop.corpus.layout import ShardLayout
-from backstop.guard.traces import Key, Row, episode_key, load_jsonl
+from backstop.guard.traces import TraceRow, load_traces
 from backstop.label.web import JsonRequestHandler, VideoClips
 
 ASSETS_DIR = Path(__file__).resolve().parent / "guard_assets"
@@ -29,13 +30,20 @@ class GuardState:
     """The trace rows, loaded once at startup."""
 
     def __init__(self, traces_path: Path) -> None:
-        self.rows = load_jsonl(traces_path)
-        self.by_key: dict[Key, Row] = {episode_key(row): row for row in self.rows}
+        self.rows = load_traces(traces_path)
+        self.by_key: dict[EpisodeKey, TraceRow] = {row.key: row for row in self.rows}
 
     def index(self) -> list[dict[str, object]]:
         """What the sidebar lists: one entry per episode, without the per-step series."""
-        fields = ("shard", "episode_index", "success", "scores")
-        return [{field: row[field] for field in fields} for row in self.rows]
+        return [
+            {
+                "shard": row.shard,
+                "episode_index": row.episode_index,
+                "success": row.success,
+                "scores": row.scores,
+            }
+            for row in self.rows
+        ]
 
 
 class Handler(JsonRequestHandler):
@@ -66,11 +74,11 @@ class Handler(JsonRequestHandler):
         if shard is None or episode is None:
             self.send_json_error(400, "missing ?shard=&episode=")
             return
-        row = self.state.by_key.get((shard, int(episode)))
+        row = self.state.by_key.get(EpisodeKey(shard, int(episode)))
         if row is None:
             self.send_json_error(404, "no trace")
             return
-        self.send_json(row)
+        self.send_json(row.to_json())
 
 
 def main(argv: list[str] | None = None) -> int:

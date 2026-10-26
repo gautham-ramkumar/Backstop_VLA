@@ -9,8 +9,9 @@ from collections.abc import Sequence
 
 import numpy as np
 
+from backstop.corpus.episode import EpisodeKey
 from backstop.guard.stopwatch import StopwatchRule, fit_stopwatch_rule
-from backstop.guard.traces import Key, Row, episode_key
+from backstop.guard.traces import TraceRow
 
 
 def auroc(
@@ -26,10 +27,10 @@ def auroc(
 
 
 def fit_stopwatch_from_rows(
-    rows: list[Row], series_of: dict[Key, np.ndarray], budget: float
+    rows: list[TraceRow], series_of: dict[EpisodeKey, np.ndarray], budget: float
 ) -> StopwatchRule:
     """`fit_stopwatch_rule` from the successes among `rows`; failures are ignored."""
-    good = [row for row in rows if row["success"]]
-    peaks = np.array([float(series_of[episode_key(row)].max()) for row in good])
-    lengths = np.array([int(row["n_steps"]) for row in good])  # type: ignore[arg-type]
+    good = [row for row in rows if row.success]
+    peaks = np.array([float(series_of[row.key].max()) for row in good])
+    lengths = np.array([row.n_steps for row in good])
     return fit_stopwatch_rule(peaks, lengths, budget)

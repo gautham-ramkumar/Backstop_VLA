@@ -1,11 +1,13 @@
-"""Reading `traces.jsonl` and `labels.jsonl`, and the plumbing every
+"""`traces.jsonl` and `labels.jsonl` as typed rows, and the plumbing every
 evaluation script repeats on top of them.
 
-`scripts/evaluate_guard.py` writes one trace row per episode (shard, episode
-index, success, episode score, per-step disagreement series). The other
-scripts read those rows back, key them by (shard, episode), split them into
-calibration and held-out halves, and look up reviewed onset ranges, all
-through this module, never through each other.
+`scripts/evaluate_guard.py` writes one `TraceRow` per episode (shard, episode
+index, success, episode score, per-step disagreement series). The other scripts
+read them back, split them into calibration and held-out halves, and look up
+reviewed onset ranges, all through this module, never through each other.
+
+Labels are typed for reading only (`LabelView`). They are written by
+`backstop.label.extract`, raw, so reviewed rows round-trip byte for byte.
 
 No privileged sim state (ADR-003). Onset ranges are read only to report lead
 time; nothing here fits on them.
@@ -14,14 +16,15 @@ time; nothing here fits on them.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
-from backstop.guard.split import EpisodeKey, stratified_split
-
-Row = dict[str, object]
-Key = tuple[str, int]
+from backstop.corpus.episode import EpisodeKey
+from backstop.guard.split import stratified_split
 
 FPS = 20
 # Left out of the pooled spatial corpus: `language_absent` has no task to
@@ -30,68 +33,124 @@ EXCLUDED_SHARDS = frozenset({"language_absent", "object_clean"})
 OBJECT_SHARD = "object_clean"
 
 
-def as_float(value: object) -> float:
-    """A JSON number as float; raises on anything else instead of guessing."""
-    if isinstance(value, int | float) and not isinstance(value, bool):
-        return float(value)
-    raise TypeError(f"expected a number, got {type(value).__name__}: {value!r}")
+@dataclass(frozen=True, eq=False)
+class TraceRow:
+    """One episode's guard signal. `per_step` maps a signal to its per-step series.
+
+    Compared by identity: value equality over arrays has no single answer.
+    """
+
+    shard: str
+    episode_index: int
+    success: bool
+    n_steps: int
+    task: str
+    scores: dict[str, float]
+    per_step: dict[str, np.ndarray]
+
+    @property
+    def key(self) -> EpisodeKey:
+        return EpisodeKey(self.shard, self.episode_index)
+
+    def series(self, name: str) -> np.ndarray:
+        return self.per_step[name]
+
+    @classmethod
+    def from_json(cls, row: dict[str, Any]) -> TraceRow:
+        return cls(
+            shard=str(row["shard"]),
+            episode_index=int(row["episode_index"]),
+            success=bool(row["success"]),
+            n_steps=int(row["n_steps"]),
+            task=str(row["task"]),
+            scores={name: float(value) for name, value in row["scores"].items()},
+            per_step={
+                name: np.asarray(values, dtype=np.float64)
+                for name, values in row["per_step"].items()
+            },
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "shard": self.shard,
+            "episode_index": self.episode_index,
+            "success": self.success,
+            "n_steps": self.n_steps,
+            "task": self.task,
+            "scores": self.scores,
+            "per_step": {
+                name: [float(value) for value in series] for name, series in self.per_step.items()
+            },
+        }
 
 
-def as_int(value: object) -> int:
-    """A JSON integer as int; raises on anything else (a float like 2.5 too)."""
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    raise TypeError(f"expected an integer, got {type(value).__name__}: {value!r}")
+def load_traces(path: Path) -> list[TraceRow]:
+    return [TraceRow.from_json(row) for row in load_jsonl(path)]
 
 
-def load_jsonl(path: Path) -> list[Row]:
+def write_traces(path: Path, rows: Iterable[TraceRow]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as handle:
+        for row in rows:
+            handle.write(json.dumps(row.to_json()) + "\n")
+
+
+@dataclass(frozen=True)
+class LabelView:
+    """What the guard scripts read from a label row."""
+
+    key: EpisodeKey
+    success: bool
+    n_steps: int
+    onset_range: tuple[int, int] | None
+    """The human-reviewed onset window, or None if the episode has none."""
+
+    @classmethod
+    def from_json(cls, row: dict[str, Any]) -> LabelView:
+        review = row.get("review")
+        onset = review.get("onset_range") if isinstance(review, dict) else None
+        if isinstance(onset, list) and len(onset) == 2:
+            onset = (int(onset[0]), int(onset[1]))
+        return cls(
+            key=EpisodeKey(str(row["shard"]), int(row["episode_index"])),
+            success=bool(row["success"]),
+            n_steps=int(row["n_steps"]),
+            onset_range=onset if isinstance(onset, tuple) else None,
+        )
+
+
+def load_labels(path: Path) -> dict[EpisodeKey, LabelView]:
+    views = (LabelView.from_json(row) for row in load_jsonl(path))
+    return {view.key: view for view in views}
+
+
+def onset_range(labels: dict[EpisodeKey, LabelView], key: EpisodeKey) -> tuple[int, int] | None:
+    label = labels.get(key)
+    return label.onset_range if label is not None else None
+
+
+def load_jsonl(path: Path) -> list[dict[str, Any]]:
     with Path(path).open() as handle:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-def episode_key(row: Row) -> Key:
-    return str(row["shard"]), int(row["episode_index"])  # type: ignore[arg-type]
-
-
-def labels_by_key(path: Path) -> dict[Key, Row]:
-    return {episode_key(row): row for row in load_jsonl(path)}
-
-
-def spatial_pool(traces: list[Row], excluded: frozenset[str] = EXCLUDED_SHARDS) -> list[Row]:
-    return [row for row in traces if str(row["shard"]) not in excluded]
-
-
-def onset_range(labels: dict[Key, Row], shard: str, episode: int) -> tuple[int, int] | None:
-    """The human-reviewed onset window, or None if the episode has none."""
-    row = labels.get((shard, episode))
-    review = row.get("review") if row is not None else None
-    if not isinstance(review, dict):
-        return None
-    onset = review.get("onset_range")
-    if not isinstance(onset, list) or len(onset) != 2:
-        return None
-    return int(onset[0]), int(onset[1])
+def spatial_pool(
+    traces: list[TraceRow], excluded: frozenset[str] = EXCLUDED_SHARDS
+) -> list[TraceRow]:
+    return [row for row in traces if row.shard not in excluded]
 
 
 def split_halves(
-    rows: list[Row], *, eval_fraction: float, seed: int
-) -> tuple[list[Row], list[Row]]:
+    rows: list[TraceRow], *, eval_fraction: float, seed: int
+) -> tuple[list[TraceRow], list[TraceRow]]:
     """(calibration, held-out), stratified by shard and outcome (ADR-004)."""
-    keys = [(*episode_key(row), bool(row["success"])) for row in rows]
+    keys = [(row.shard, row.episode_index, row.success) for row in rows]
     split = stratified_split(keys, eval_fraction=eval_fraction, seed=seed)
-    calibration = [row for row in rows if EpisodeKey(*episode_key(row)) in split.calibration]
-    held_out = [row for row in rows if EpisodeKey(*episode_key(row)) in split.eval]
+    calibration = [row for row in rows if row.key in split.calibration]
+    held_out = [row for row in rows if row.key in split.eval]
     return calibration, held_out
 
 
-def series_map(rows: list[Row], name: str) -> dict[Key, np.ndarray]:
+def series_map(rows: list[TraceRow], name: str) -> dict[EpisodeKey, np.ndarray]:
     """key -> one per-step series."""
-    series: dict[Key, np.ndarray] = {}
-    for row in rows:
-        per_step = row["per_step"]
-        if not isinstance(per_step, dict):
-            raise ValueError(f"{episode_key(row)}: trace is missing per_step")
-        series[episode_key(row)] = np.asarray(per_step[name], dtype=np.float64)
-    return series
+    return {row.key: row.series(name) for row in rows}
