@@ -8,7 +8,7 @@ Two data sources, never mixed inside one function:
 
 - `observation.state` (T, 8) -- already in every dataset row, every family,
   every shard. `eef_pos(3) + eef_axisangle(3) + gripper_qpos(2)`
-  (`record/loop.py::_capture_obs`). Gripper open ~ +-0.039 per finger
+  (`record/obs.py::capture_obs`). Gripper open ~ +-0.039 per finger
   (width ~0.077); closed ~0-0.02 (width ~0.01-0.02) -- measured directly off a
   real successful clean episode, not assumed.
 - privileged `sim_state` (T, 92) -- the flattened MuJoCo `time + qpos + qvel`

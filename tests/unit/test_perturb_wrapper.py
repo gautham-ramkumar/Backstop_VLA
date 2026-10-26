@@ -8,7 +8,7 @@ overriding it means setting an instance attribute on the wrapper itself rather
 than calling through to the wrapped env. This is exactly the kind of thing that
 can look wired up (the family has a `task_description()` method, the wrapper
 looks like it should call it) while nothing on the path from the perturbation to
-`vec_env.call("task_description")` -- what the record loop and `_build_frame`
+`vec_env.call("task_description")` -- what the record loop and `build_frame`
 both read -- actually invokes it.
 """
 

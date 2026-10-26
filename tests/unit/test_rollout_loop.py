@@ -24,7 +24,7 @@ pytest.importorskip("lerobot")
 
 import numpy as np  # noqa: E402
 
-from backstop.record.loop import UnnormalizeError, _unnormalize_array  # noqa: E402
+from backstop.record.step import UnnormalizeError, unnormalize_array  # noqa: E402
 from backstop.schema import ACTION_DIM, CHUNK_SIZE, STATE_DIM  # noqa: E402
 from fakes.rollout import (  # noqa: E402
     DONE_AT,
@@ -221,12 +221,12 @@ def test_a_failing_unnormalize_stops_the_run_instead_of_storing_policy_space() -
 
     chunk = np.zeros((4, CHUNK_SIZE, ACTION_DIM), dtype=np.float32)
     with pytest.raises(UnnormalizeError, match="policy space") as raised:
-        _unnormalize_array(broken_post, chunk)
+        unnormalize_array(broken_post, chunk)
     assert isinstance(raised.value.__cause__, RuntimeError)
 
 
 def test_unnormalize_applies_the_postprocessor_to_every_sample() -> None:
     chunk = np.ones((4, CHUNK_SIZE, ACTION_DIM), dtype=np.float32)
-    out = _unnormalize_array(SpyPostprocessor(), chunk)
+    out = unnormalize_array(SpyPostprocessor(), chunk)
     assert out.shape == chunk.shape
     np.testing.assert_allclose(out, chunk * POST_SCALE)
