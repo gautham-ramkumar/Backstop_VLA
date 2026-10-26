@@ -1,4 +1,4 @@
-"""Perturbation protocol and the RNG discipline every family follows.
+"""The perturbation base class and the RNG discipline every family follows.
 
 A perturbation makes the environment harder in one named way, with a `strength`
 in [0, 1] mapped to family-specific units. Each family's strength is tuned so
@@ -19,23 +19,34 @@ Two hook points, deliberately in different places:
 from __future__ import annotations
 
 import zlib
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 import numpy as np
 
 
-@runtime_checkable
-class Perturbation(Protocol):
+class Perturbation:
+    """Base of every family. The defaults are the do-nothing behaviour, so a family
+    overrides only the hooks it uses.
+
+    `needs_env_hook` says whether the family needs `PerturbedEnv` at all, i.e.
+    whether `prepare_env`, `on_reset` or `task_description` ever does anything.
+    False for families that only implement `perturb_action` (applied in the record
+    loop, not the wrapper): wrapping the env for them would be pure overhead, and
+    would require every vec_env, including a minimal test fake, to expose
+    in-process sub-envs it has no other reason to have.
+    """
+
     name: str
     strength: float
-    # Whether this family needs `PerturbedEnv` at all -- i.e. whether `on_reset`
-    # or `task_description` ever does anything. False for families that only
-    # implement `perturb_action` (applied in the record loop, not the wrapper):
-    # wrapping the env for them would be pure overhead, and would require every
-    # vec_env, including a minimal test fake, to expose in-process sub-envs it has
-    # no other reason to have. Read via `getattr(..., True)` at the call site, so
-    # a family that omits this attribute defaults to the safe assumption.
-    needs_env_hook: bool
+    needs_env_hook: bool = True
+
+    @classmethod
+    def from_config(cls, strength: float, **kwargs: Any) -> Perturbation:
+        """Build from a config's `perturbation_strength` and `perturbation_kwargs`."""
+        return cls(strength, **kwargs)  # type: ignore[call-arg]
+
+    def prepare_env(self, env: Any) -> None:
+        """Edit a LeRobot `LiberoEnv` once, before its simulator is first built."""
 
     def on_reset(self, control_env: Any, rng: np.random.Generator) -> bool:
         """Mutate the simulator after reset. Return True if physics changed.
@@ -44,32 +55,31 @@ class Perturbation(Protocol):
         observation, because a moved object may be interpenetrating or floating.
         Purely visual changes return False and skip the settling.
         """
-        ...
+        return False
 
     def perturb_action(self, action: np.ndarray, rng: np.random.Generator) -> np.ndarray:
         """The action actually sent to the env, given the one the policy chose."""
-        ...
+        return action
+
+    def task_description(self, original: str) -> str:
+        """The instruction the policy sees, given the task's own."""
+        return original
 
     def params(self) -> dict[str, Any]:
         """What was applied, for the label sidecar. Must be JSON-safe."""
-        ...
+        return {}
 
 
-class NoPerturbation:
+class NoPerturbation(Perturbation):
     """The clean arm. Present so the clean and perturbed paths are the same code."""
 
     name = "clean"
     strength = 0.0
     needs_env_hook = False
 
-    def on_reset(self, control_env: Any, rng: np.random.Generator) -> bool:
-        return False
-
-    def perturb_action(self, action: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-        return action
-
-    def params(self) -> dict[str, Any]:
-        return {}
+    @classmethod
+    def from_config(cls, strength: float, **kwargs: Any) -> Perturbation:
+        return cls()
 
 
 def episode_rng(episode_seed: int, name: str) -> np.random.Generator:

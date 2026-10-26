@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from backstop.policy.adapter import OpenVLAAdapter, UnsupportedPolicyError
 from backstop.schema import (
     ACTION_DIM,
     CHUNK_SIZE,
@@ -53,8 +52,3 @@ def test_metric_contract_from_yaml(repo_root: Path) -> None:
 def test_metric_contract_rejects_accuracy_headline() -> None:
     with pytest.raises(ValidationError):
         MetricContract(false_stop_budget=0.05, headline_metric="accuracy")  # type: ignore[arg-type]
-
-
-def test_openvla_stub_is_unimplemented() -> None:
-    with pytest.raises(UnsupportedPolicyError, match="week-1"):
-        OpenVLAAdapter()

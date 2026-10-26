@@ -6,6 +6,7 @@ import inspect
 import os
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -133,6 +134,34 @@ def close_libero(envs: dict[str, dict[int, Any]]) -> None:
     close_envs(envs)
 
 
+def lerobot_env(vec_env: Any, index: int = 0) -> Any:
+    """LeRobot's gym `LiberoEnv` for sub-env `index`, under any wrappers."""
+    try:
+        return vec_env.envs[index].unwrapped
+    except (AttributeError, IndexError, TypeError) as exc:
+        raise RuntimeError(
+            f"Cannot reach the LIBERO env behind {type(vec_env).__name__}[{index}]. "
+            "This path assumes in-process sub-envs (use_async_envs=False); an async "
+            "vector env would need the call routed through `vec_env.call` instead."
+        ) from exc
+
+
+def control_env(env: Any) -> Any:
+    """LIBERO's `ControlEnv` inside one LeRobot `LiberoEnv`.
+
+    Raises rather than returning None: every caller is either capturing data that
+    cannot be recovered without re-running the episode, or perturbing a scene
+    that would otherwise be recorded unperturbed.
+    """
+    inner = getattr(env, "_env", None)
+    if inner is None:
+        raise RuntimeError(
+            f"{type(env).__name__}._env is None -- the simulator is built lazily on "
+            "first reset(). Reach for it after reset, not before."
+        )
+    return inner
+
+
 def libero_control_env(vec_env: Any, index: int = 0) -> Any:
     """The LIBERO `ControlEnv` behind a LeRobot vector env.
 
@@ -140,28 +169,49 @@ def libero_control_env(vec_env: Any, index: int = 0) -> Any:
     the simulator is directly reachable: sub-env -> `.unwrapped` (LeRobot's gym
     `LiberoEnv`) -> `._env` (LIBERO's `OffScreenRenderEnv`, an `ControlEnv`
     subclass carrying `get_sim_state` / `regenerate_obs_from_state`).
-
-    Raises rather than returning None. Every caller here is capturing data that
-    cannot be recovered without re-running the episode, so a missing simulator must
-    stop the run, not degrade it.
     """
-    try:
-        inner = vec_env.envs[index].unwrapped._env
-    except (AttributeError, IndexError, TypeError) as exc:
-        raise RuntimeError(
-            f"Cannot reach the LIBERO ControlEnv behind {type(vec_env).__name__}[{index}]. "
-            "This path assumes in-process sub-envs (use_async_envs=False); an async "
-            "vector env would need the call routed through `vec_env.call` instead."
-        ) from exc
-    if inner is None:
-        raise RuntimeError(
-            "LiberoEnv._env is None -- the simulator is built lazily on first reset(). "
-            "Capture sim state after reset, not before."
-        )
+    inner = control_env(lerobot_env(vec_env, index))
     for method in ("get_sim_state", "regenerate_obs_from_state"):
         if not callable(getattr(inner, method, None)):
             raise RuntimeError(f"{type(inner).__name__} has no {method}(); LIBERO API changed.")
     return inner
+
+
+def refresh_raw_obs(inner: Any) -> Any:
+    """A fresh raw LIBERO observation of the simulator as it is now."""
+    return inner.env._get_observations(force_update=True)
+
+
+def format_raw_obs(env: Any, raw: Any) -> Any:
+    """A raw LIBERO observation in the per-env LeRobot layout `reset` returns."""
+    return env._format_raw_obs(raw)
+
+
+def task_description(vec_env: Any, fallback: str) -> str:
+    """The instruction the policy sees, as any perturbation wrapper left it."""
+    try:
+        return str(list(vec_env.call("task_description"))[0])
+    except (AttributeError, NotImplementedError, TypeError):
+        return fallback
+
+
+def max_episode_steps(vec_env: Any) -> int:
+    return int(vec_env.call("_max_episode_steps")[0])
+
+
+def swap_task_files(env: Any, rewrite: Callable[[str, Any], tuple[str, Any]]) -> None:
+    """Replace a `LiberoEnv`'s BDDL file and init states before its simulator exists.
+
+    `rewrite(bddl_path, init_states)` returns the replacements. LeRobot builds the
+    MuJoCo model from these on the first reset, so swapping them later would
+    silently change nothing.
+    """
+    if getattr(env, "_env", None) is not None:
+        raise RuntimeError(
+            "Task files must be swapped before the LIBERO simulator is built; "
+            "this sub-env's model already exists."
+        )
+    env._task_bddl_file, env._init_states = rewrite(env._task_bddl_file, env._init_states)
 
 
 def sim_state(vec_env: Any, index: int = 0) -> Any:
@@ -230,6 +280,27 @@ def restore_sim_state(vec_env: Any, state: Any, index: int = 0) -> Any:
     new code path. Returns the raw LIBERO observation dict, not a LeRobot one.
     """
     return libero_control_env(vec_env, index).regenerate_obs_from_state(state)
+
+
+def restore_observation(vec_env: Any, state: Any) -> Any:
+    """Restore a one-env vector env to `state`; return the observation batched like `reset`.
+
+    The branch point of a counterfactual run: the result goes through the same
+    preprocessing as any other observation. Call it after a reset, so the vector
+    env holds no pending autoreset from an earlier episode.
+
+    Close to, not identical with, the observation the run saw at `state`: after
+    `mj_step`, MuJoCo's body and camera poses still describe the start of the last
+    2 ms substep, and a restore recomputes them for `state` itself. Images differ
+    by under 0.1 grey level on average (`scripts/verify_sim_state_roundtrip.py`).
+    """
+    from gymnasium.vector.utils import concatenate, create_empty_array  # noqa: PLC0415
+
+    if len(vec_env.envs) != 1:
+        raise ValueError(f"restore_observation needs a one-env vector env, got {len(vec_env.envs)}")
+    observation = format_raw_obs(lerobot_env(vec_env), restore_sim_state(vec_env, state))
+    space = vec_env.single_observation_space
+    return concatenate(space, [observation], create_empty_array(space, n=1))
 
 
 # BDDL class names whose plain name is not the snake case spelled out.

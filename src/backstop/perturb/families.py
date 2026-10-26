@@ -26,7 +26,8 @@ from typing import Any
 
 import numpy as np
 
-from backstop.perturb.base import episode_rng
+from backstop.env.libero import swap_task_files
+from backstop.perturb.base import Perturbation, episode_rng
 
 # Table bounds live at the top so the calibration sweep has one place to read.
 LIGHT_DIFFUSE_DROP = 0.8  # at strength 1.0, diffuse falls to 20% of default
@@ -58,7 +59,7 @@ DISTRACTOR_XY_JITTER_SIGMA_M = 0.02  # at strength 1.0, sigma of xy jitter aroun
 DISTRACTOR_YAW_JITTER_RAD = 0.6  # at strength 1.0, matches OBJECT_YAW_SIGMA_RAD's magnitude
 
 
-class Lighting:
+class Lighting(Perturbation):
     """Dim and move the scene lights, and the camera headlight. Purely visual,
     so no re-settling.
 
@@ -106,9 +107,6 @@ class Lighting:
 
         return False
 
-    def perturb_action(self, action: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-        return action
-
     def params(self) -> dict[str, Any]:
         return {
             "strength": self.strength,
@@ -120,7 +118,7 @@ class Lighting:
 AGENTVIEW_CAMERA = "agentview"
 
 
-class Camera:
+class Camera(Perturbation):
     """Jitter the agentview camera's pose and field of view. Purely visual, so no
     re-settling -- the scene itself is untouched, only how it is seen.
 
@@ -170,14 +168,11 @@ class Camera:
         }
         return False
 
-    def perturb_action(self, action: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-        return action
-
     def params(self) -> dict[str, Any]:
         return {"strength": self.strength, "camera": AGENTVIEW_CAMERA, **self._applied}
 
 
-class ObjectPose:
+class ObjectPose(Perturbation):
     """Move the objects on the table. This is 'move the target object'.
 
     Writes each movable object's free-joint qpos directly, then settles and
@@ -262,9 +257,6 @@ class ObjectPose:
         self._applied = applied
         return False
 
-    def perturb_action(self, action: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-        return action
-
     def params(self) -> dict[str, Any]:
         return {
             "strength": self.strength,
@@ -276,7 +268,7 @@ class ObjectPose:
         }
 
 
-class ActionNoise:
+class ActionNoise(Perturbation):
     """Gaussian noise on the executed action. Breaks control, not perception.
 
     The only family where the executed action differs from the policy's, which is
@@ -287,16 +279,12 @@ class ActionNoise:
     """
 
     name = "action_noise"
-    # Only `perturb_action` does anything (applied in the record loop); `on_reset`
-    # is a no-op, so this needs no `PerturbedEnv` wrapping at all.
+    # Only `perturb_action` does anything (applied in the record loop).
     needs_env_hook = False
 
     def __init__(self, strength: float) -> None:
         self.strength = float(strength)
         self.sigma = ACTION_NOISE_SIGMA * float(strength)
-
-    def on_reset(self, control_env: Any, rng: np.random.Generator) -> bool:
-        return False
 
     def perturb_action(self, action: np.ndarray, rng: np.random.Generator) -> np.ndarray:
         noisy = np.asarray(action, dtype=np.float64).copy()
@@ -307,7 +295,7 @@ class ActionNoise:
         return {"strength": self.strength, "sigma": self.sigma, "gripper_noised": False}
 
 
-class AbsentTarget:
+class AbsentTarget(Perturbation):
     """Instruct the robot to manipulate an object that is not in the scene.
 
     'Remove the target object', done through the instruction rather than through
@@ -325,11 +313,10 @@ class AbsentTarget:
     def __init__(self, replacement: str) -> None:
         self.replacement = replacement
 
-    def on_reset(self, control_env: Any, rng: np.random.Generator) -> bool:
-        return False
-
-    def perturb_action(self, action: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-        return action
+    @classmethod
+    def from_config(cls, strength: float, **kwargs: Any) -> Perturbation:
+        # Categorical: the text is supplied, so there is no strength to scale.
+        return cls(**kwargs)
 
     def task_description(self, original: str) -> str:
         return self.replacement
@@ -338,7 +325,7 @@ class AbsentTarget:
         return {"replacement": self.replacement}
 
 
-class Paraphrase:
+class Paraphrase(Perturbation):
     """Reword the instruction without changing what it asks for. The control arm
 
     for language: this family must leave the outcome distribution alone. Without
@@ -358,11 +345,10 @@ class Paraphrase:
     def __init__(self, paraphrase: str) -> None:
         self.paraphrase = paraphrase
 
-    def on_reset(self, control_env: Any, rng: np.random.Generator) -> bool:
-        return False
-
-    def perturb_action(self, action: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-        return action
+    @classmethod
+    def from_config(cls, strength: float, **kwargs: Any) -> Perturbation:
+        # Categorical: the text is supplied, so there is no strength to scale.
+        return cls(**kwargs)
 
     def task_description(self, original: str) -> str:
         return self.paraphrase
@@ -371,7 +357,7 @@ class Paraphrase:
         return {"paraphrase": self.paraphrase}
 
 
-class Distractor:
+class Distractor(Perturbation):
     """Add a task-irrelevant object to the scene. The real surgery, not the
     `dynamics` stand-in the plan pre-approved as a fallback.
 
@@ -446,40 +432,36 @@ class Distractor:
         self._qpos_adr: int | None = None
         self._applied: dict[str, Any] = {"paired": None}
 
-    def prepare_env(self, inner: Any) -> None:
+    def prepare_env(self, env: Any) -> None:
         """Swap in an augmented BDDL and a matching init-state array, before
-        `inner` (a LeRobot `LiberoEnv`) ever builds its simulator.
+        `env` (a LeRobot `LiberoEnv`) ever builds its simulator.
 
         Called once, from `PerturbedEnv.__init__`. Raises if the simulator
         already exists -- that would mean this ran too late to matter, which
         should fail loudly rather than silently record a clean shard under
         `distractor`'s name.
         """
-        if getattr(inner, "_env", None) is not None:
-            raise RuntimeError(
-                "Distractor.prepare_env must run before the LIBERO simulator is "
-                "built; this sub-env's model already exists."
-            )
-        original_path = inner._task_bddl_file
-        modified_text = _inject_distractor(Path(original_path).read_text())
+        swap_task_files(env, self._augment)
+
+    def _augment(self, bddl_path: str, init_states: Any) -> tuple[str, Any]:
+        modified_text = _inject_distractor(Path(bddl_path).read_text())
         handle = tempfile.NamedTemporaryFile(  # noqa: SIM115 -- path outlives this function
             mode="w", suffix=".bddl", prefix="backstop_distractor_", delete=False
         )
         handle.write(modified_text)
         handle.close()
-        inner._task_bddl_file = handle.name
 
         nq_base, nv_base, qpos_adr, dof_adr, default_qpos = _probe_distractor_model(handle.name)
         self._qpos_adr = qpos_adr
 
-        if inner._init_states is None:
+        if init_states is None:
             # No init-state file to splice into: every reset falls back to the
             # augmented model's own placement sampler for every object, not
             # just the distractor. See the class docstring's unpaired fallback.
             self._applied["paired"] = False
-            return
+            return handle.name, None
 
-        original_states = np.asarray(inner._init_states, dtype=np.float64)
+        original_states = np.asarray(init_states, dtype=np.float64)
         expected_len = 1 + nq_base + nv_base
         if original_states.shape[1] != expected_len:
             raise RuntimeError(
@@ -487,7 +469,7 @@ class Distractor:
                 f"{expected_len} (1 + nq_base {nq_base} + nv_base {nv_base}); "
                 "the base model's joint layout does not match this init file."
             )
-        inner._init_states = np.stack(
+        spliced = np.stack(
             [
                 _splice_distractor(
                     row,
@@ -503,6 +485,7 @@ class Distractor:
             ]
         )
         self._applied["paired"] = True
+        return handle.name, spliced
 
     def on_reset(self, control_env: Any, rng: np.random.Generator) -> bool:
         """Nothing left to mutate: the distractor's placement for this episode
@@ -514,9 +497,6 @@ class Distractor:
             qpos = sim.data.qpos[self._qpos_adr : self._qpos_adr + 7]
             self._applied["qpos"] = np.asarray(qpos, dtype=np.float64).tolist()
         return False
-
-    def perturb_action(self, action: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-        return action
 
     def params(self) -> dict[str, Any]:
         return {

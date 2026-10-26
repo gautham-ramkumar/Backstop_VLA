@@ -23,7 +23,7 @@ torch = pytest.importorskip("torch")
 
 import numpy as np  # noqa: E402
 
-from backstop.policy.adapter import BatchedSamplingError, SmolVLAAdapter  # noqa: E402
+from backstop.policy.smolvla import BatchedSamplingError, SmolVLAAdapter  # noqa: E402
 from backstop.schema import ACTION_DIM, CHUNK_SIZE  # noqa: E402
 
 K = 4

@@ -1,17 +1,20 @@
-"""Policy adapters. Backstop consumes chunks, not model internals."""
+"""SmolVLA through LeRobot: loading it, and the adapter the rollout loop calls.
+
+Every use of LeRobot's policy internals (`_get_action_chunk`, `_queues`) lives in
+this module, so a LeRobot upgrade breaks here and nowhere else.
+"""
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Protocol, runtime_checkable
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 from backstop.config import PolicyConfig
+from backstop.policy.base import Processors, UnsupportedPolicyError
 
 logger = logging.getLogger(__name__)
-
-
-class UnsupportedPolicyError(NotImplementedError):
-    """Raised when a deferred policy adapter is constructed."""
 
 
 class BatchedSamplingError(RuntimeError):
@@ -20,30 +23,6 @@ class BatchedSamplingError(RuntimeError):
     Distinct from an OOM on purpose: OOM falls back to sequential sampling, and a
     broken batch must not take that exit and record silently-degraded chunks.
     """
-
-
-@runtime_checkable
-class PolicyAdapter(Protocol):
-    chunk_size: int
-    action_dim: int
-
-    def reset(self) -> None: ...
-
-    def select_action(self, observation: dict[str, Any]) -> Any: ...
-
-    def last_action_chunk(self) -> Any: ...
-
-    def sample_chunks(self, observation: dict[str, Any], k: int) -> Any: ...
-
-
-class OpenVLAAdapter:
-    """Deferred until the SmolVLA record/eval loop is proven (ADR-002)."""
-
-    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-        raise UnsupportedPolicyError(
-            "OpenVLA is out of week-1 scope. Prove the SmolVLA loop first "
-            "(see docs/adr/002-checkpoint.md)."
-        )
 
 
 class SmolVLAAdapter:
@@ -247,20 +226,56 @@ class SmolVLAAdapter:
         return self._policy
 
 
-def make_adapter(cfg: PolicyConfig, policy: Any | None = None) -> PolicyAdapter:
-    if cfg.type == "openvla":
+def load_pinned_config(from_pretrained: Callable[..., Any], path: str, revision: str | None) -> Any:
+    """Load a policy config at exactly `revision`, or at HEAD only when none is pinned.
+
+    There is deliberately no fallback: if the loader rejects `revision`, the
+    error propagates. Retrying without it would load whatever the Hub repo
+    holds today while provenance still records the pin.
+    """
+    if revision:
+        return from_pretrained(path, revision=revision)
+    return from_pretrained(path)
+
+
+def load_policy_runtime(cfg: PolicyConfig, env_cfg: Any) -> tuple[SmolVLAAdapter, Processors]:
+    """The pinned checkpoint, wrapped for the loop, and its four processors."""
+    if cfg.type != "smolvla":
         raise UnsupportedPolicyError(
-            "OpenVLA is out of week-1 scope. Prove the SmolVLA loop first "
+            f"policy.type {cfg.type!r} is not implemented; only SmolVLA is "
             "(see docs/adr/002-checkpoint.md)."
         )
-    if policy is None:
-        raise ValueError("SmolVLAAdapter requires a loaded LeRobot policy")
-    return SmolVLAAdapter(
+    from lerobot.configs import PreTrainedConfig  # noqa: PLC0415
+    from lerobot.envs import make_env_pre_post_processors  # noqa: PLC0415
+    from lerobot.policies import make_policy, make_pre_post_processors  # noqa: PLC0415
+
+    policy_cfg = load_pinned_config(PreTrainedConfig.from_pretrained, cfg.path, cfg.revision)
+    # Declared as `Path | None`; lerobot only truth-tests it and forwards it as an
+    # HF `pretrained_name_or_path`, so a Hub repo id round-trips through Path fine.
+    policy_cfg.pretrained_path = Path(cfg.path)
+    policy_cfg.device = cfg.device
+    # n_action_steps/num_steps live on the concrete policy config (SmolVLAConfig),
+    # not the PreTrainedConfig base -- the hasattr guard is the runtime contract.
+    if hasattr(policy_cfg, "n_action_steps"):
+        policy_cfg.n_action_steps = cfg.n_action_steps  # type: ignore[attr-defined]
+    if hasattr(policy_cfg, "num_steps"):
+        policy_cfg.num_steps = cfg.num_steps  # type: ignore[attr-defined]
+    policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
+    policy.eval()
+    preprocessor_overrides = {"device_processor": {"device": str(policy.config.device)}}
+    pre, post = make_pre_post_processors(
+        policy_cfg=policy_cfg,
+        pretrained_path=str(policy_cfg.pretrained_path),
+        preprocessor_overrides=preprocessor_overrides,
+    )
+    env_pre, env_post = make_env_pre_post_processors(env_cfg=env_cfg, policy_cfg=policy_cfg)
+    adapter = SmolVLAAdapter(
         policy,
         n_action_steps=cfg.n_action_steps,
         num_steps=cfg.num_steps,
         batch_samples=cfg.batch_samples,
     )
+    return adapter, Processors(env_pre=env_pre, pre=pre, post=post, env_post=env_post)
 
 
 def _np() -> Any:

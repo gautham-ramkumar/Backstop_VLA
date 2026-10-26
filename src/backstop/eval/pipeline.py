@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +16,7 @@ from backstop.env.libero import (
 )
 from backstop.eval.report import write_eval_report, write_failures_markdown, write_timing_report
 from backstop.eval.tolerance import tolerance_verdict
-from backstop.policy.adapter import SmolVLAAdapter
+from backstop.policy.smolvla import load_policy_runtime
 from backstop.provenance import build_provenance
 from backstop.record.loop import create_dataset, run_episodes
 from backstop.record.timing import StageTimer
@@ -25,51 +24,10 @@ from backstop.record.timing import StageTimer
 logger = logging.getLogger(__name__)
 
 
-def load_pinned_config(from_pretrained: Callable[..., Any], path: str, revision: str | None) -> Any:
-    """Load a policy config at exactly `revision`, or at HEAD only when none is pinned.
-
-    There is deliberately no fallback: if the loader rejects `revision`, the
-    error propagates. Retrying without it would load whatever the Hub repo
-    holds today while provenance still records the pin.
-    """
-    if revision:
-        return from_pretrained(path, revision=revision)
-    return from_pretrained(path)
-
-
-def load_lerobot_policy(cfg: PipelineConfig, env_cfg: Any) -> Any:
-    from lerobot.configs import PreTrainedConfig  # noqa: PLC0415
-    from lerobot.policies import make_policy, make_pre_post_processors  # noqa: PLC0415
-
-    policy_cfg = load_pinned_config(
-        PreTrainedConfig.from_pretrained, cfg.policy.path, cfg.policy.revision
-    )
-    # Declared as `Path | None`; lerobot only truth-tests it and forwards it as an
-    # HF `pretrained_name_or_path`, so a Hub repo id round-trips through Path fine.
-    policy_cfg.pretrained_path = Path(cfg.policy.path)
-    policy_cfg.device = cfg.policy.device
-    # n_action_steps/num_steps live on the concrete policy config (SmolVLAConfig),
-    # not the PreTrainedConfig base -- the hasattr guard is the runtime contract.
-    if hasattr(policy_cfg, "n_action_steps"):
-        policy_cfg.n_action_steps = cfg.policy.n_action_steps  # type: ignore[attr-defined]
-    if hasattr(policy_cfg, "num_steps"):
-        policy_cfg.num_steps = cfg.policy.num_steps  # type: ignore[attr-defined]
-    policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
-    policy.eval()
-    preprocessor_overrides = {"device_processor": {"device": str(policy.config.device)}}
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=policy_cfg,
-        pretrained_path=str(policy_cfg.pretrained_path),
-        preprocessor_overrides=preprocessor_overrides,
-    )
-    return policy, preprocessor, postprocessor, policy_cfg
-
-
 def run_pipeline(cfg: PipelineConfig, timer: StageTimer | None = None) -> dict[str, Any]:
     """Run the eval/record pipeline. `timer` is for benchmarks that want CUDA sync;
     every run is timed either way and writes `timing.json`."""
     apply_render_backend(cfg.env.mujoco_gl)
-    from lerobot.envs import make_env_pre_post_processors  # noqa: PLC0415
     from lerobot.utils.random_utils import set_seed  # noqa: PLC0415
 
     set_seed(cfg.seed)
@@ -79,14 +37,7 @@ def run_pipeline(cfg: PipelineConfig, timer: StageTimer | None = None) -> dict[s
     envs = make_libero_envs(cfg.env, cfg.eval)
     lerobot_env_cfg = build_libero_env_config(cfg.env, cfg.eval)
 
-    policy, preprocessor, postprocessor, policy_cfg = load_lerobot_policy(cfg, lerobot_env_cfg)
-    env_pre, env_post = make_env_pre_post_processors(env_cfg=lerobot_env_cfg, policy_cfg=policy_cfg)
-    adapter = SmolVLAAdapter(
-        policy,
-        n_action_steps=cfg.policy.n_action_steps,
-        num_steps=cfg.policy.num_steps,
-        batch_samples=cfg.policy.batch_samples,
-    )
+    policy, processors = load_policy_runtime(cfg.policy, lerobot_env_cfg)
 
     dataset, n_done = (
         create_dataset(cfg, fps=int(lerobot_env_cfg.fps)) if cfg.record.enabled else (None, 0)
@@ -94,13 +45,8 @@ def run_pipeline(cfg: PipelineConfig, timer: StageTimer | None = None) -> dict[s
     try:
         stats = run_episodes(
             envs=envs,
-            adapter=adapter,
-            processors={
-                "env_preprocessor": env_pre,
-                "env_postprocessor": env_post,
-                "preprocessor": preprocessor,
-                "postprocessor": postprocessor,
-            },
+            policy=policy,
+            processors=processors,
             cfg=cfg,
             dataset=dataset,
             start_seed=cfg.seed,

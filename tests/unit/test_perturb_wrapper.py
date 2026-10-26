@@ -25,7 +25,13 @@ pytest.importorskip("gymnasium")
 
 import gymnasium as gym  # noqa: E402
 
-from backstop.perturb import AbsentTarget, ActionNoise, NoPerturbation, Paraphrase  # noqa: E402
+from backstop.perturb import (  # noqa: E402
+    AbsentTarget,
+    ActionNoise,
+    NoPerturbation,
+    Paraphrase,
+    Perturbation,
+)
 from backstop.perturb.wrapper import PerturbedEnv  # noqa: E402
 
 
@@ -103,22 +109,12 @@ def test_prepare_env_runs_once_before_the_first_reset() -> None:
     `on_reset`."""
     calls: list[Any] = []
 
-    class FakePerturbation:
+    class FakePerturbation(Perturbation):
         name = "distractor"
         strength = 1.0
-        needs_env_hook = True
 
-        def prepare_env(self, inner: Any) -> None:
-            calls.append(inner)
-
-        def on_reset(self, control_env: Any, rng: Any) -> bool:
-            return False
-
-        def perturb_action(self, action: Any, rng: Any) -> Any:
-            return action
-
-        def params(self) -> dict[str, Any]:
-            return {}
+        def prepare_env(self, env: Any) -> None:
+            calls.append(env)
 
     inner = FakeInnerEnv("pick up the bowl", raw_obs={"observed": True})
     wrapped_env = FakeWrappedEnv(inner)
@@ -129,8 +125,8 @@ def test_prepare_env_runs_once_before_the_first_reset() -> None:
 
 
 def test_families_without_prepare_env_are_unaffected() -> None:
-    """Every family except `distractor` omits `prepare_env` entirely; the
-    wrapper must not require it."""
+    """Every family except `distractor` inherits the base class's no-op
+    `prepare_env`; wrapping must leave the env as it was."""
     wrapped = _perturbed_env("pick up the bowl", NoPerturbation())
 
     wrapped.reset()

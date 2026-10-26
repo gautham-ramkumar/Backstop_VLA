@@ -24,23 +24,13 @@ from backstop.perturb.families import (
 )
 from backstop.perturb.wrapper import PerturbedEnv, attach
 
-FAMILIES: dict[str, Any] = {
+FAMILIES: dict[str, type[Perturbation]] = {
     NoPerturbation.name: NoPerturbation,
     Lighting.name: Lighting,
     Camera.name: Camera,
     ObjectPose.name: ObjectPose,
     ActionNoise.name: ActionNoise,
     Distractor.name: Distractor,
-    AbsentTarget.name: AbsentTarget,
-    Paraphrase.name: Paraphrase,
-}
-
-# Families whose constructor takes a supplied value (the text to swap in) rather
-# than a sampled `strength`. Both are categorical: there is nothing for a knob to
-# scale, so treating them like the numeric families would need a fake strength
-# that means nothing.
-_CATEGORICAL: dict[str, Any] = {
-    NoPerturbation.name: NoPerturbation,
     AbsentTarget.name: AbsentTarget,
     Paraphrase.name: Paraphrase,
 }
@@ -73,9 +63,4 @@ def make_perturbation(name: str, strength: float = 0.0, **kwargs: Any) -> Pertur
         raise ValueError(f"unknown perturbation {name!r}; known: {sorted(FAMILIES)}")
     if not 0.0 <= strength <= 1.0:
         raise ValueError(f"strength must be in [0, 1], got {strength}")
-    family = FAMILIES[name]
-    if family is NoPerturbation:
-        return NoPerturbation()
-    if name in _CATEGORICAL:
-        return family(**kwargs)
-    return family(strength, **kwargs)
+    return FAMILIES[name].from_config(strength, **kwargs)

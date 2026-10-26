@@ -29,7 +29,8 @@ import torch
 from lerobot.envs.configs import LiberoEnv
 
 from backstop.config import PipelineConfig
-from backstop.policy.adapter import SmolVLAAdapter
+from backstop.policy.base import Processors
+from backstop.policy.smolvla import SmolVLAAdapter
 from backstop.record.loop import run_episodes
 from backstop.schema import ACTION_DIM, CHUNK_SIZE
 
@@ -254,13 +255,13 @@ def run_fake_rollout(
     )
     stats = run_episodes(
         envs={"libero_spatial": {0: FakeVecEnv(image, with_sim=with_sim)}},
-        adapter=adapter,
-        processors={
-            "env_preprocessor": env_pre,
-            "env_postprocessor": lambda transition: transition,
-            "preprocessor": lambda observation: observation,
-            "postprocessor": post,
-        },
+        policy=adapter,
+        processors=Processors(
+            env_pre=env_pre,
+            pre=lambda observation: observation,
+            post=post,
+            env_post=lambda transition: transition,
+        ),
         cfg=cfg,
         dataset=dataset,
         start_seed=0,

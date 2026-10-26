@@ -20,6 +20,7 @@ Exits non-zero if any check fails.
 from __future__ import annotations
 
 import argparse
+from typing import Any
 
 import numpy as np
 
@@ -28,6 +29,7 @@ from backstop.config import EnvYamlConfig, EvalYamlConfig
 from backstop.env.libero import (
     close_libero,
     make_libero_envs,
+    restore_observation,
     restore_sim_state,
     sim_state,
 )
@@ -136,8 +138,37 @@ def run(task: str, task_id: int, n_steps: int, branch_at: int, seed: int) -> Non
             "the branch state actually differs from the initial state",
             "otherwise the equality check above proves nothing",
         )
+
+        # The recovery runner branches from a restored state, so the observation it
+        # hands the policy must match the one the run saw at that state. Not bit for
+        # bit: after `mj_step` MuJoCo's positions and camera poses still describe the
+        # start of the last 2 ms substep, while a restore recomputes them for the
+        # state itself. Measured: images differ by under 0.1 grey level on average,
+        # proprioception by under 3e-4.
+        reset_obs, _ = vec_env.reset(seed=[seed])
+        state = sim_state(vec_env)
+        restored = restore_observation(vec_env, state)
+        gaps = _leaf_gaps(reset_obs, restored)
+        worst = {key: f"{gap:.2g}" for key, gap in gaps.items() if gap > 0}
+        check(
+            all(gap <= (0.5 if key.startswith("/pixels") else 1e-3) for key, gap in gaps.items()),
+            "restore_observation after a reset matches the reset observation",
+            f"image mean / state max abs diff: {worst}",
+        )
+        check(
+            not any(_leaf_gaps(restored, restore_observation(vec_env, state)).values()),
+            "restoring the same state twice gives the identical observation",
+        )
     finally:
         close_libero(envs)
+
+
+def _leaf_gaps(a: Any, b: Any, path: str = "") -> dict[str, float]:
+    """Per array: mean abs difference for images, max abs difference for the rest."""
+    if isinstance(a, dict):
+        return {k: v for key in a for k, v in _leaf_gaps(a[key], b[key], f"{path}/{key}").items()}
+    diff = np.abs(np.asarray(a, dtype=np.float64) - np.asarray(b, dtype=np.float64))
+    return {path: float(diff.mean() if path.startswith("/pixels") else diff.max())}
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -11,9 +11,9 @@ from typing import Any
 import numpy as np
 
 from backstop.config import PipelineConfig
-from backstop.env.libero import instrument_render, sim_state
+from backstop.env.libero import instrument_render, max_episode_steps, sim_state, task_description
 from backstop.perturb import Perturbation, attach, episode_rng, make_perturbation
-from backstop.policy.adapter import SmolVLAAdapter
+from backstop.policy.base import ChunkPolicy, Processors
 from backstop.record.privileged import PrivilegedWriter
 from backstop.record.timing import StageTimer
 from backstop.schema import ACTION_DIM, CHUNK_SIZE, STATE_DIM, lerobot_features
@@ -140,8 +140,8 @@ def _assert_resumable(dataset: Any, *, features: dict[str, dict], fps: int, root
 def run_episodes(
     *,
     envs: dict[str, dict[int, Any]],
-    adapter: SmolVLAAdapter,
-    processors: dict[str, Any],
+    policy: ChunkPolicy,
+    processors: Processors,
     cfg: PipelineConfig,
     dataset: Any | None,
     start_seed: int,
@@ -161,11 +161,6 @@ def run_episodes(
     from lerobot.envs import preprocess_observation  # noqa: PLC0415
     from lerobot.envs.utils import NEW_ROLLOUT_OPTION  # noqa: PLC0415
     from lerobot.utils.constants import ACTION  # noqa: PLC0415
-
-    env_pre = processors["env_preprocessor"]
-    env_post = processors["env_postprocessor"]
-    pre = processors["preprocessor"]
-    post = processors["postprocessor"]
 
     rows: list[dict[str, Any]] = []
     n_success = 0
@@ -193,11 +188,8 @@ def run_episodes(
                     continue
                 success, n_steps = _rollout_one(
                     vec_env=vec_env,
-                    adapter=adapter,
-                    env_pre=env_pre,
-                    env_post=env_post,
-                    pre=pre,
-                    post=post,
+                    policy=policy,
+                    processors=processors,
                     preprocess_observation=preprocess_observation,
                     action_key=ACTION,
                     new_rollout_option=NEW_ROLLOUT_OPTION,
@@ -258,11 +250,8 @@ def run_episodes(
 def _rollout_one(
     *,
     vec_env: Any,
-    adapter: SmolVLAAdapter,
-    env_pre: Any,
-    env_post: Any,
-    pre: Any,
-    post: Any,
+    policy: ChunkPolicy,
+    processors: Processors,
     preprocess_observation: Any,
     action_key: str,
     new_rollout_option: Any,
@@ -277,12 +266,18 @@ def _rollout_one(
     task_id: int,
 ) -> tuple[bool, int]:
     """Returns (success, n_steps). Episode length separates timeouts from early ends."""
-    adapter.reset()
+    policy.reset()
+    env_pre, pre, post, env_post = (
+        processors.env_pre,
+        processors.pre,
+        processors.post,
+        processors.env_post,
+    )
     # Only wrap when the family actually needs reset-time hooking: `attach`
     # requires in-process sub-envs (`vec_env.envs`), which a family that only
     # implements `perturb_action` (applied below, not through the wrapper) has no
     # reason to force on every vec_env.
-    if getattr(perturbation, "needs_env_hook", True):
+    if perturbation.needs_env_hook:
         attach(vec_env, perturbation, episode_seed=seed)
     with timer("env_reset"):
         observation, _info = vec_env.reset(seed=[seed], options={new_rollout_option: True})
@@ -291,13 +286,12 @@ def _rollout_one(
     instrument_render(vec_env, timer)
     if privileged is not None:
         privileged.begin_episode(episode_index)
-    try:
-        task_desc = list(vec_env.call("task_description"))[0]
-    except (AttributeError, NotImplementedError, TypeError):
-        task_desc = f"{suite_name}/task_{task_id}"
+    # Read once: the perturbation wrapper sets it at reset, and nothing changes it
+    # mid-episode.
+    task_desc = task_description(vec_env, fallback=f"{suite_name}/task_{task_id}")
 
     done = np.array([False])
-    max_steps = vec_env.call("_max_episode_steps")[0]
+    max_steps = max_episode_steps(vec_env)
     success = False
     step = 0
     k = cfg.record.k_samples
@@ -310,10 +304,7 @@ def _rollout_one(
     while not bool(done[0]) and step < max_steps:
         with timer("obs_prep"):
             observation = preprocess_observation(observation)
-            try:
-                observation["task"] = list(vec_env.call("task_description"))
-            except (AttributeError, NotImplementedError, TypeError):
-                observation["task"] = [task_desc]
+            observation["task"] = [task_desc]
 
             observation = env_pre(observation)
             # Capture after env_pre (state assembled, images flipped) but before `pre`,
@@ -333,12 +324,12 @@ def _rollout_one(
             # `policy_select` is the cost K cannot remove, `policy_samples` is the
             # cost K adds. The throughput benchmark reports the ratio between them.
             with timer("policy_select"):
-                action = adapter.select_action(
-                    observation, noise=adapter.noise_for(episode_seed=seed, step=step, index=0)
+                action = policy.select_action(
+                    observation, noise=policy.noise_for(episode_seed=seed, step=step, index=0)
                 )
-                chunk = adapter.last_action_chunk()
+                chunk = policy.last_action_chunk()
             with timer("policy_samples"):
-                samples = adapter.sample_chunks(observation, k, episode_seed=seed, step=step)
+                samples = policy.sample_chunks(observation, k, episode_seed=seed, step=step)
 
         with timer("action_post"):
             action = post(action)
