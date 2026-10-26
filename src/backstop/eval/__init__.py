@@ -1,3 +1,1 @@
-from backstop.eval.report import HeadlineMetricError, write_eval_report, write_guard_report
-
-__all__ = ["HeadlineMetricError", "write_eval_report", "write_guard_report"]
+"""Evaluating and recording runs: the pipeline, its CLIs, tolerance and reports."""

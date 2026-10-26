@@ -31,6 +31,7 @@ from backstop.eval.report import write_secondary_report
 from backstop.guard.calibrate import bootstrap_rates
 from backstop.guard.calibrate import evaluate as eval_metrics
 from backstop.guard.extract import SIGNAL, load_corpus_signals
+from backstop.guard.split import EVAL_FRACTION
 from backstop.guard.summarize import report_signal
 from backstop.guard.traces import TraceRow, write_traces
 from backstop.schema import DETECTION_METRIC, load_metric_contract
@@ -215,19 +216,15 @@ def _splice(path: Path, generated: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--lerobot-root", type=Path, default=Path("data/lerobot"))
-    parser.add_argument("--privileged-root", type=Path, default=Path("data/privileged"))
-    parser.add_argument("--eval-root", type=Path, default=Path("artifacts/eval"))
+    ShardLayout.add_args(parser)
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/guard"))
     parser.add_argument("--report-path", type=Path, default=Path("docs/evaluation.md"))
-    parser.add_argument("--eval-fraction", type=float, default=0.3)
+    parser.add_argument("--eval-fraction", type=float, default=EVAL_FRACTION)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args(argv)
 
     contract = load_metric_contract()
-    by_shard = load_corpus_signals(
-        ShardLayout(args.lerobot_root, args.privileged_root, args.eval_root)
-    )
+    by_shard = load_corpus_signals(ShardLayout.from_args(args))
     if not by_shard:
         print(f"no shards found under {args.privileged_root}")
         return 1

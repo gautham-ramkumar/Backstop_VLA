@@ -33,9 +33,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from backstop.schema import EEF_POS, GRIPPER_QPOS
+
 # --- observation.state layout (STATE_DIM = 8, schema.py) ---
-EEF_POS_SLICE = slice(0, 3)
-GRIPPER_QPOS_SLICE = slice(6, 8)
 
 # Measured off backstop_spatial_clean_k4 episode 0 (a real success): finger
 # width (finger1 - finger2) starts ~0.077 (open) and ends ~0.01-0.02 (closed
@@ -76,13 +76,13 @@ ONSET_PAD_AFTER = 15
 
 def gripper_width(state: np.ndarray) -> np.ndarray:
     """(T,) finger1 - finger2. Open ~0.077 m, closed ~0.01-0.02 m."""
-    qpos = state[:, GRIPPER_QPOS_SLICE]
+    qpos = state[:, GRIPPER_QPOS]
     return qpos[:, 0] - qpos[:, 1]
 
 
 def eef_positions(state: np.ndarray) -> np.ndarray:
     """(T, 3) end-effector position, world frame."""
-    return state[:, EEF_POS_SLICE]
+    return state[:, EEF_POS]
 
 
 def eef_path_length(state: np.ndarray) -> float:

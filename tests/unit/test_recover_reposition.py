@@ -9,15 +9,14 @@ import pytest
 from pydantic import ValidationError
 
 from backstop.recover.reposition import (
-    ACTION_DIM,
-    EEF_POS,
-    GRIPPER,
     GRIPPER_OPEN,
     METRES_PER_UNIT,
+    TRANSLATION,
     Phase,
     RepositionConfig,
     RepositionMotion,
 )
+from backstop.schema import ACTION_DIM, EEF_POS, GRIPPER_INDEX
 
 START = np.array([-0.21, -0.01, 1.17, 3.14, 0.0, -0.09, 0.039, -0.039])
 
@@ -32,7 +31,7 @@ def _run(config: RepositionConfig, lag: float = 0.25) -> tuple[list[np.ndarray],
         if action is None:
             return actions, state
         actions.append(action)
-        state[EEF_POS] += lag * action[EEF_POS] * METRES_PER_UNIT
+        state[EEF_POS] += lag * action[TRANSLATION] * METRES_PER_UNIT
     raise AssertionError("motion did not finish within max_total_steps")
 
 
@@ -52,7 +51,7 @@ def test_every_action_is_valid_and_keeps_the_gripper_open() -> None:
     for action in actions:
         assert action.shape == (ACTION_DIM,)
         assert np.all(np.abs(action[EEF_POS]) <= config.max_action + 1e-12)
-        assert action[GRIPPER] == GRIPPER_OPEN
+        assert action[GRIPPER_INDEX] == GRIPPER_OPEN
         assert np.all(action[3:6] == 0.0)  # never rotates the hand
 
 

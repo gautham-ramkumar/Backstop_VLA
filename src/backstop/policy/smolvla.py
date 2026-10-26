@@ -11,8 +11,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from backstop.config import PolicyConfig
-from backstop.policy.base import Processors, UnsupportedPolicyError
+from backstop.policy.base import Processors, UnsupportedPolicyError, as_numpy
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +91,6 @@ class SmolVLAAdapter:
         return self._policy.select_action(observation, noise=noise)
 
     def last_action_chunk(self) -> Any:
-        np = _np()
         if self._last_chunk is None:
             return np.zeros((self.chunk_size, self.action_dim), dtype=np.float32)
         return self._last_chunk
@@ -111,7 +112,6 @@ class SmolVLAAdapter:
         The K-1 extras go through `select_action`'s *sibling*, never through
         `select_action` itself, so nothing here can move the executed trajectory.
         """
-        np = _np()
         executed = self.last_action_chunk()
         predict = getattr(self, "_original_predict", None)
         if predict is None or k <= 1:
@@ -194,7 +194,7 @@ class SmolVLAAdapter:
             ],
             dim=0,
         )
-        chunks = _as_numpy(predict(_tile_batch(observation, n), noise=noise))
+        chunks = as_numpy(predict(_tile_batch(observation, n), noise=noise))
         if chunks.ndim != 3 or chunks.shape[0] != n:
             raise BatchedSamplingError(
                 f"Batched sampling asked for {n} chunks and got shape {chunks.shape}. "
@@ -278,12 +278,6 @@ def load_policy_runtime(cfg: PolicyConfig, env_cfg: Any) -> tuple[SmolVLAAdapter
     return adapter, Processors(env_pre=env_pre, pre=pre, post=post, env_post=env_post)
 
 
-def _np() -> Any:
-    import numpy as np  # noqa: PLC0415
-
-    return np
-
-
 def _tile_batch(observation: dict[str, Any], n: int) -> dict[str, Any]:
     """Repeat a batch-of-one observation `n` times along the batch dimension.
 
@@ -347,8 +341,7 @@ def _copy_queues(queues: Any) -> Any:
 
 
 def _chunk_to_numpy(chunk: Any, chunk_size: int, action_dim: int) -> Any:
-    np = _np()
-    array = np.asarray(_as_numpy(chunk), dtype=np.float32)
+    array = np.asarray(as_numpy(chunk), dtype=np.float32)
     if array.ndim == 3:
         array = array[0]
     if array.ndim == 1:
@@ -362,10 +355,3 @@ def _chunk_to_numpy(chunk: Any, chunk_size: int, action_dim: int) -> Any:
         pad = np.repeat(array[-1:], chunk_size - array.shape[0], axis=0)
         array = np.concatenate([array, pad], axis=0)
     return array[:chunk_size].astype(np.float32)
-
-
-def _as_numpy(value: Any) -> Any:
-    np = _np()
-    if hasattr(value, "detach"):
-        return value.detach().cpu().numpy()
-    return np.asarray(value)

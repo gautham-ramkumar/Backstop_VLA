@@ -16,6 +16,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 ACTION_DIM = 7
 STATE_DIM = 8
 CHUNK_SIZE = 50
+# One dataset row per control step, and LIBERO's controller runs at 20 Hz.
+CONTROL_FPS = 20
+# `observation.state` as LeRobot's LIBERO processor assembles it:
+# eef xyz (3), eef axis-angle (3), finger qpos (2).
+EEF_POS = slice(0, 3)
+GRIPPER_QPOS = slice(6, 8)
+# The action's last dimension drives the gripper: -1 opens, +1 closes.
+GRIPPER_INDEX = 6
 
 FORBIDDEN_HEADLINES = frozenset({"accuracy", "raw_accuracy", "success_rate"})
 # ADR-005: mean stop step saved over a stopwatch, both held to the same budget.

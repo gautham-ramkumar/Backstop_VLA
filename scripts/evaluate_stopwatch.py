@@ -35,11 +35,12 @@ from pathlib import Path
 import numpy as np
 
 from backstop.corpus.episode import EpisodeKey
+from backstop.corpus.layout import LABELS, TRACES
 from backstop.eval.report import write_guard_report
 from backstop.guard.scoring import auroc, fit_stopwatch_from_rows
+from backstop.guard.split import EVAL_FRACTION
 from backstop.guard.stopwatch import StopwatchRule, stop_step
 from backstop.guard.traces import (
-    FPS,
     OBJECT_SHARD,
     LabelView,
     TraceRow,
@@ -50,7 +51,7 @@ from backstop.guard.traces import (
     spatial_pool,
     split_halves,
 )
-from backstop.schema import HEADLINE_METRIC, load_metric_contract
+from backstop.schema import CONTROL_FPS, HEADLINE_METRIC, load_metric_contract
 
 # ADR-005: the headline guard. The simplest one: a single signal, nothing
 # learned, and the first signal built (ADR-004).
@@ -246,7 +247,7 @@ def _print(report: dict[str, object]) -> None:
         if "mean_stop_step_mean" in row:
             line += (
                 f"  mean stop step {row['mean_stop_step_mean']:.0f} "
-                f"({row['mean_stop_step_mean'] / FPS:.1f} s), signal first "
+                f"({row['mean_stop_step_mean'] / CONTROL_FPS:.1f} s), signal first "
                 f"{row['signal_first_fraction_mean']:.0%}"
             )
         if "saved_over_stopwatch_mean" in row:
@@ -272,13 +273,13 @@ def _print(report: dict[str, object]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--traces", type=Path, default=Path("artifacts/guard/traces.jsonl"))
-    parser.add_argument("--labels", type=Path, default=Path("artifacts/corpus/labels.jsonl"))
+    parser.add_argument("--traces", type=Path, default=TRACES)
+    parser.add_argument("--labels", type=Path, default=LABELS)
     parser.add_argument(
         "--output", type=Path, default=Path("artifacts/guard/stopwatch/report.json")
     )
-    parser.add_argument("--budget", type=float, default=0.05)
-    parser.add_argument("--eval-fraction", type=float, default=0.3)
+    parser.add_argument("--budget", type=float, default=load_metric_contract().false_stop_budget)
+    parser.add_argument("--eval-fraction", type=float, default=EVAL_FRACTION)
     parser.add_argument("--splits", type=int, default=20)
     parser.add_argument("--draws", type=int, default=200)
     args = parser.parse_args()
@@ -290,7 +291,7 @@ def main() -> None:
     report: dict[str, object] = {
         "budget": args.budget,
         "eval_fraction": args.eval_fraction,
-        "fps": FPS,
+        "fps": CONTROL_FPS,
         "note": (
             "Stopwatch rules are set from calibration successes only. Every "
             "failure outlasts the clock, so detection is 1.0 by construction; "
@@ -315,7 +316,7 @@ def main() -> None:
     values = {
         "guard": HEADLINE_GUARD,
         "saved_steps_mean": headline["saved_over_stopwatch_mean"],
-        "saved_seconds_mean": headline["saved_over_stopwatch_mean"] / FPS,
+        "saved_seconds_mean": headline["saved_over_stopwatch_mean"] / CONTROL_FPS,
         "saved_steps_p10": headline["saved_over_stopwatch_p10"],
         "saved_steps_p90": headline["saved_over_stopwatch_p90"],
         "saved_steps_min": headline["saved_over_stopwatch_min"],
@@ -325,7 +326,7 @@ def main() -> None:
         "splits_over_budget": headline["splits_over_budget"],
         "signal_first_fraction_mean": headline["signal_first_fraction_mean"],
         "n_splits": headline["n_splits"],
-        "fps": FPS,
+        "fps": CONTROL_FPS,
         "stopwatch_only": splits["stopwatch only"],
         "all_or_rules": guards,
         "source": str(args.output),

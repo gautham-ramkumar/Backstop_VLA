@@ -42,33 +42,16 @@ def load_episode_video_range(
     agentview camera. LeRobot v3 concatenates every episode's frames into one
     video per chunk; `meta/episodes` is what records where one episode ends
     and the next begins."""
-    columns = [
-        "episode_index",
-        f"videos/{VIDEO_KEY}/chunk_index",
-        f"videos/{VIDEO_KEY}/file_index",
-        f"videos/{VIDEO_KEY}/from_timestamp",
-        f"videos/{VIDEO_KEY}/to_timestamp",
-    ]
+    video = f"videos/{VIDEO_KEY}/"
+    fields = ("chunk_index", "file_index", "from_timestamp", "to_timestamp")
     files = sorted((Path(dataset_root) / "meta" / "episodes").rglob("*.parquet"))
     for file in files:
-        d = read_parquet_pydict(file, columns=columns)
-        for row_idx, idx in enumerate(d["episode_index"]):
-            if int(idx) != episode_index:
-                continue
-            chunk = d[f"videos/{VIDEO_KEY}/chunk_index"][row_idx]
-            part = d[f"videos/{VIDEO_KEY}/file_index"][row_idx]
-            video_path = (
-                Path(dataset_root)
-                / "videos"
-                / VIDEO_KEY
-                / f"chunk-{chunk:03d}"
-                / f"file-{part:03d}.mp4"
-            )
-            return (
-                video_path,
-                float(d[f"videos/{VIDEO_KEY}/from_timestamp"][row_idx]),
-                float(d[f"videos/{VIDEO_KEY}/to_timestamp"][row_idx]),
-            )
+        d = read_parquet_pydict(file, columns=["episode_index", *(video + f for f in fields)])
+        for row, idx in enumerate(d["episode_index"]):
+            if int(idx) == episode_index:
+                chunk, part, start, end = (d[video + f][row] for f in fields)
+                path = Path(dataset_root) / video / f"chunk-{chunk:03d}" / f"file-{part:03d}.mp4"
+                return path, float(start), float(end)
     raise FileNotFoundError(f"episode {episode_index} not found in {dataset_root}/meta/episodes")
 
 

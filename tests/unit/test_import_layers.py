@@ -27,7 +27,7 @@ SCRIPTS = ROOT / "scripts"
 
 FOUNDATION = frozenset({"backstop", "schema", "config", "provenance", "parquet_io"})
 ALLOWED: dict[str, frozenset[str]] = {
-    "backstop": frozenset({"schema"}),
+    "backstop": frozenset(),
     "checks": frozenset(),
     "schema": frozenset(),
     "config": frozenset(),

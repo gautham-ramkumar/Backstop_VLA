@@ -21,8 +21,8 @@ import numpy as np
 
 from backstop.checks import Checks
 from backstop.parquet_io import as_array
+from backstop.schema import CONTROL_FPS, GRIPPER_QPOS
 
-CONTROL_FPS = 20
 LIBERO_SPATIAL_MAX_STEPS = 280
 GRIPPER_QPOS_ABS_MAX = 0.06
 ACTION_ABS_MAX = 1.5
@@ -140,7 +140,7 @@ def verify_dataset(dataset: Path, perturbation: str = "clean") -> None:
             bool(np.allclose(action, chunk[:, 0], rtol=1e-3, atol=1e-4)),
             "executed action == action_chunk[0] -- pre-ADR-003, no action_policy column",
         )
-    grip = float(np.abs(state[:, 6:8]).max())
+    grip = float(np.abs(state[:, GRIPPER_QPOS]).max())
     check(
         0.0 < grip <= GRIPPER_QPOS_ABS_MAX,
         "observation.state[6:8] looks like gripper qpos",

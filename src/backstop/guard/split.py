@@ -18,6 +18,9 @@ import numpy as np
 
 from backstop.corpus.episode import EpisodeKey
 
+# The held-out share of every calibration/eval split (ADR-004).
+EVAL_FRACTION = 0.3
+
 
 @dataclass(frozen=True)
 class Split:

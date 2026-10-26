@@ -19,7 +19,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from backstop.corpus.episode import EpisodeKey
-from backstop.corpus.layout import ShardLayout
+from backstop.corpus.layout import TRACES, ShardLayout
 from backstop.guard.traces import TraceRow, load_traces
 from backstop.label.web import JsonRequestHandler, VideoClips
 
@@ -35,15 +35,8 @@ class GuardState:
 
     def index(self) -> list[dict[str, object]]:
         """What the sidebar lists: one entry per episode, without the per-step series."""
-        return [
-            {
-                "shard": row.shard,
-                "episode_index": row.episode_index,
-                "success": row.success,
-                "scores": row.scores,
-            }
-            for row in self.rows
-        ]
+        fields = ("shard", "episode_index", "success", "scores")
+        return [{field: getattr(row, field) for field in fields} for row in self.rows]
 
 
 class Handler(JsonRequestHandler):
@@ -84,9 +77,8 @@ class Handler(JsonRequestHandler):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8766)
-    parser.add_argument("--traces", type=Path, default=Path("artifacts/guard/traces.jsonl"))
-    parser.add_argument("--lerobot-root", type=Path, default=Path("data/lerobot"))
-    parser.add_argument("--eval-root", type=Path, default=Path("artifacts/eval"))
+    parser.add_argument("--traces", type=Path, default=TRACES)
+    ShardLayout.add_args(parser)
     parser.add_argument(
         "--video-cache-dir", type=Path, default=Path("artifacts/corpus/video_cache")
     )
@@ -97,8 +89,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     Handler.state = GuardState(args.traces)
     Handler.assets_dir = ASSETS_DIR
-    layout = ShardLayout(lerobot_root=args.lerobot_root, eval_root=args.eval_root)
-    Handler.clips = VideoClips(layout, args.video_cache_dir)
+    Handler.clips = VideoClips(ShardLayout.from_args(args), args.video_cache_dir)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"Guard viewer: http://127.0.0.1:{args.port}")
     with contextlib.suppress(KeyboardInterrupt):

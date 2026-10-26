@@ -8,8 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from backstop.policy.base import ChunkPolicy, Processors
-from backstop.record.obs import as_numpy
+from backstop.policy.base import ChunkPolicy, Processors, as_numpy
 from backstop.record.timing import StageTimer
 
 

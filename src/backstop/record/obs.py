@@ -12,7 +12,7 @@ from typing import Any
 
 import numpy as np
 
-from backstop.policy.base import Processors
+from backstop.policy.base import Processors, as_numpy
 from backstop.schema import STATE_DIM
 
 
@@ -75,9 +75,3 @@ def _to_hwc_uint8(img: Any) -> np.ndarray:
     if array.ndim == 2:
         array = np.repeat(array[..., None], 3, axis=-1)
     return np.ascontiguousarray(array)
-
-
-def as_numpy(value: Any) -> np.ndarray:
-    if hasattr(value, "detach"):
-        return value.detach().cpu().numpy()
-    return np.asarray(value)

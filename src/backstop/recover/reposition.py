@@ -34,11 +34,11 @@ import numpy as np
 import yaml
 from pydantic import BaseModel, Field
 
-ACTION_DIM = 7
-GRIPPER = 6
+from backstop.schema import ACTION_DIM, EEF_POS, GRIPPER_INDEX
+
 GRIPPER_OPEN = -1.0
-# observation.state (LeRobot LIBERO): eef xyz, eef axis-angle, finger qpos x2.
-EEF_POS = slice(0, 3)
+# The action's first three dimensions move the hand in xyz.
+TRANSLATION = slice(0, 3)
 METRES_PER_UNIT = 0.05  # OSC_POSE output_max for position
 
 
@@ -95,11 +95,11 @@ class RepositionMotion:
             return None
         self._steps_in_phase += 1
         action = np.zeros(ACTION_DIM)
-        action[GRIPPER] = GRIPPER_OPEN
+        action[GRIPPER_INDEX] = GRIPPER_OPEN
         if self.phase in self._goals:
             error = self._goals[self.phase] - position
             limit = self.config.max_action
-            action[EEF_POS] = np.clip(error / METRES_PER_UNIT, -limit, limit)
+            action[TRANSLATION] = np.clip(error / METRES_PER_UNIT, -limit, limit)
         return action
 
     def _phase_done(self, position: np.ndarray) -> bool:

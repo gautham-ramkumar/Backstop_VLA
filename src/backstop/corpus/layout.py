@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from backstop.schema import RunProvenance
+
+# What the analysis scripts read and write, besides the shards themselves.
+TRACES = Path("artifacts/guard/traces.jsonl")
+LABELS = Path("artifacts/corpus/labels.jsonl")
 
 
 @dataclass(frozen=True)
@@ -18,6 +23,17 @@ class ShardLayout:
     privileged_root: Path = Path("data/privileged")
     eval_root: Path = Path("artifacts/eval")
     configs_root: Path = Path("configs/record")
+
+    @staticmethod
+    def add_args(parser: argparse.ArgumentParser) -> None:
+        """`--lerobot-root`, `--privileged-root`, `--eval-root`, `--configs-root`."""
+        for name, default in vars(ShardLayout()).items():
+            flag = "--" + name.replace("_", "-")
+            parser.add_argument(flag, type=Path, default=default)
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> ShardLayout:
+        return cls(args.lerobot_root, args.privileged_root, args.eval_root, args.configs_root)
 
     def discover_shards(self) -> list[str]:
         """Every shard recorded with `privileged: true`, the corpus shards."""

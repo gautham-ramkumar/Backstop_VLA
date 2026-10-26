@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import numpy as np
 
-GRIPPER_DIM = 6
+from backstop.schema import GRIPPER_INDEX
+
 GRIPPER_HORIZON = 10
 RESELECT_METRICS = ("outlier_ratio", "spread", "gripper_split")
 
@@ -41,7 +42,7 @@ def reselect_metrics(samples: np.ndarray) -> dict[str, np.ndarray]:
     pair = np.abs(x[:, :, None] - x[:, None, :]).mean(axis=(3, 4))
     to_zero = pair[:, 0, 1:].mean(axis=1)
     among = pair[:, 1:, 1:].sum(axis=(1, 2)) / ((k - 1) * (k - 2))
-    gripper = np.sign(x[:, :, :GRIPPER_HORIZON, GRIPPER_DIM].mean(axis=2))
+    gripper = np.sign(x[:, :, :GRIPPER_HORIZON, GRIPPER_INDEX].mean(axis=2))
     return {
         "outlier_ratio": to_zero / np.maximum(among, 1e-12),
         "spread": pair.reshape(t, -1).max(axis=1),

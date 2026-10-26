@@ -31,16 +31,19 @@ from pathlib import Path
 
 import numpy as np
 
+from backstop.corpus.layout import TRACES
 from backstop.guard.online import save_rule
 from backstop.guard.scoring import fit_stopwatch_from_rows
 from backstop.guard.stopwatch import stop_step
 from backstop.guard.traces import load_traces, series_map, spatial_pool
 from backstop.provenance import file_sha256, git_dirty, git_sha
+from backstop.schema import load_metric_contract
 
 SIGNAL = "action_chunk_disagreement"
 TARGET_SHARD = "clean"
 NOT_CALIBRATION = frozenset({TARGET_SHARD, "language_paraphrase"})
-DEFAULT_BUDGETS = (0.05, 0.20)
+# The headline budget, and the looser one docs/recovery.md argues a recovery can afford.
+DEFAULT_BUDGETS = (load_metric_contract().false_stop_budget, 0.20)
 
 
 def rule_name(budget: float) -> str:
@@ -49,7 +52,7 @@ def rule_name(budget: float) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--traces", type=Path, default=Path("artifacts/guard/traces.jsonl"))
+    parser.add_argument("--traces", type=Path, default=TRACES)
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/guard/frozen"))
     parser.add_argument("--budget", type=float, action="append", default=None)
     args = parser.parse_args()

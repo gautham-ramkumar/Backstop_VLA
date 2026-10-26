@@ -5,7 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from backstop.recover.reselect import GRIPPER_DIM, reselect_metrics
+from backstop.recover.reselect import reselect_metrics
+from backstop.schema import GRIPPER_INDEX
 
 
 def test_exchangeable_samples_give_an_outlier_ratio_near_one() -> None:
@@ -23,8 +24,8 @@ def test_an_odd_chunk_zero_stands_out() -> None:
 
 def test_gripper_split_flags_a_disagreement_on_open_vs_close() -> None:
     samples = np.zeros((2, 4, 50, 7))
-    samples[:, :, :, GRIPPER_DIM] = 1.0
-    samples[1, 2, :, GRIPPER_DIM] = -1.0
+    samples[:, :, :, GRIPPER_INDEX] = 1.0
+    samples[1, 2, :, GRIPPER_INDEX] = -1.0
     np.testing.assert_array_equal(reselect_metrics(samples)["gripper_split"], [0.0, 1.0])
 
 

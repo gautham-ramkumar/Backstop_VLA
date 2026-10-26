@@ -23,9 +23,9 @@ pytest.importorskip("gymnasium")
 
 from backstop.config import PipelineConfig  # noqa: E402
 from backstop.record import loop as record_loop  # noqa: E402
-from backstop.schema import ACTION_DIM, CHUNK_SIZE  # noqa: E402
+from backstop.schema import ACTION_DIM, CHUNK_SIZE, CONTROL_FPS, lerobot_features  # noqa: E402
 
-FPS = 20
+FPS = CONTROL_FPS
 
 
 def _cfg(root: Path, *, on_existing: str = "fail", k_samples: int = 4, **extra: Any):
@@ -57,7 +57,7 @@ def _populate(root: Path, *, k_samples: int = 4, fps: int = FPS, episodes: int =
                 "total_episodes": episodes,
                 "total_frames": episodes * 100,
                 "fps": fps,
-                "features": record_loop.dataset_features(k_samples),
+                "features": lerobot_features(k_samples),
             },
             default=list,
         )
@@ -95,7 +95,7 @@ def fake_lerobot(monkeypatch):
             calls["resume"] = kwargs
             return FakeDataset(
                 FakeMeta(
-                    on_disk.get("features", record_loop.dataset_features(4)),
+                    on_disk.get("features", lerobot_features(4)),
                     on_disk.get("fps", FPS),
                     on_disk.get("episodes", 12),
                 )
@@ -179,7 +179,7 @@ def test_resume_refuses_a_shard_recorded_at_a_different_k(tmp_path, fake_lerobot
     _calls, on_disk = fake_lerobot
     root = tmp_path / "ds"
     _populate(root, k_samples=1)
-    on_disk["features"] = record_loop.dataset_features(1)
+    on_disk["features"] = lerobot_features(1)
 
     with pytest.raises(ValueError, match="action_chunk_samples"):
         record_loop.create_dataset(_cfg(root, on_existing="resume", k_samples=4), fps=FPS)
@@ -197,7 +197,7 @@ def test_resume_refuses_a_shard_recorded_at_a_different_fps(tmp_path, fake_lerob
 
 def test_resume_shape_check_covers_the_chunk_columns(tmp_path, fake_lerobot) -> None:
     """Guards the check itself: the shapes compared must be the ones that matter."""
-    features = record_loop.dataset_features(4)
+    features = lerobot_features(4)
     assert features["action_chunk_samples"]["shape"] == (4, CHUNK_SIZE, ACTION_DIM)
     assert features["action_chunk"]["shape"] == (CHUNK_SIZE, ACTION_DIM)
 
@@ -261,3 +261,8 @@ def test_every_shipped_record_config_has_decided(tmp_path, repo_root) -> None:
         assert "privileged" in cfg.record.model_fields_set, (
             f"{path} names shard {cfg.record.shard!r} but never decides about privileged sim state"
         )
+
+
+def test_an_env_not_stepping_at_the_control_rate_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="20 Hz"):
+        record_loop.create_dataset(_cfg(tmp_path / "ds"), fps=30)

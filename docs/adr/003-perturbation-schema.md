@@ -62,7 +62,7 @@ mean the perturbation was configured but never reached the loop.
 `record.perturbation_kwargs` (for the categorical families — `absent_target`'s
 `replacement`, `language_paraphrase`'s `paraphrase`) select a
 `backstop.perturb` family for a run. `run_episodes` builds it once via
-`make_perturbation` and `_rollout_one` attaches it to the vec_env
+`make_perturbation` and `rollout_episode` attaches it to the vec_env
 (`backstop.perturb.attach`) before every reset, unless the family declares
 `needs_env_hook = False` — `action_noise` is the only family so far that
 applies purely in the loop (`perturb_action`, between the policy's postprocessed

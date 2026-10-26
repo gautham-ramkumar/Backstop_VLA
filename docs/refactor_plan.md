@@ -1,6 +1,6 @@
 # Refactor plan: seams, typed corpus, smaller code
 
-**Status:** Stages 0 and C done; the rest proposed. The Week 3–6 work is committed, and the experiments
+**Status:** every stage done (2026-10-25). See "Stages 5–8, 1, 2, 4: done" below. The Week 3–6 work is committed, and the experiments
 that lost were archived on 2026-10-18 (tag `research-archive-2026-10`,
 [experiments.md](experiments.md)). This plan starts from that smaller base.
 
@@ -51,7 +51,8 @@ Code lines only, comments, docstrings and blank lines excluded:
 |---|---|---|
 | Archive tag (all experiments live) | 7,450 | 2,849 |
 | **After archiving the losing experiments** | **5,405 (−27%)** | 2,605 |
-| **Target after this plan** | **~5,230 (−30% overall)** | ~3,250 |
+| Target after this plan | ~5,230 (−30% overall) | ~3,250 |
+| **After this plan (measured)** | **5,392 (−28%)** | 3,372 |
 
 Most of the shrinking has already happened, by deleting experiments rather than by
 refactoring. The archive removed 12 files and trimmed 9 others, and every live number
@@ -80,18 +81,71 @@ is the estimated change in code lines for `src/` plus `scripts/` once the stage 
 |---|---|---|---|---|---|
 | 0 | Golden digests, snapshot, import-layer test — **done** | S | 580 | +224 measured (tests +354) | low |
 | C | Delete obsolete scripts and the last duplication — **done** | S | 900 | **−207 measured** | low |
-| 5 | Simulator seam + `PerturbationBase` | M | 250 | −20 | medium |
-| 6 | Policy seam: `ChunkPolicy`, `Processors`, `policy/smolvla.py` | M | 250 | −40 | medium |
-| 7 | Split `_rollout_one` into obs / decide / sink | L | 350 | **+40** | **high** |
-| 8 | Thin `run_pipeline` | S | 120 | −10 | low |
-| 1 | `backstop/corpus/` reader | M | 250 | −50 | low–medium |
-| 2 | Typed `EpisodeKey` + `TraceRow` | S–M | 200 | −30 | medium |
-| 4 | Paths/guard config + shared constants | S | 150 | −40 | low |
-| | **Total** | | ~3,100 | **about −140** (Stages 0 and C measured, the rest estimated) | |
+| 5–6 | Simulator and policy seams — **done** | M | 500 | −60 est., **−1 measured** | medium |
+| 7 | Split `_rollout_one` into obs / decide / sink — **done** | L | 350 | +40 est., **+51 measured** | **high** |
+| 8 | Thin `run_pipeline` — **done** | S | 120 | −10 est., **−2 measured** | low |
+| 1 | `backstop/corpus/` reader — **done** | M | 250 | −50 est., **−21 measured** | low–medium |
+| 2 | Typed `EpisodeKey` + `TraceRow` — **done** | S–M | 200 | −30 est., **+3 measured** | medium |
+| 4 | Shared constants and defaults, plus unused re-exports removed — **done** | S | 150 | −40 est., **−63 measured** | low |
+| | **Total after Stage C** | | | **5,425 → 5,392 (−33)**; tests 3,100 → 3,372 | |
 
 Stage 7 is the one stage expected to grow. Replacing 18 keyword arguments with two small
 dataclasses, and one long function with four named pieces, costs a few lines. That's the
 price of making the recovery runner a reuse instead of a copy.
+
+## Stages 5–8, 1, 2, 4: done
+
+Proved unchanged at every stage: the golden rollout test, the analysis snapshot
+(identical to the Stage C baseline after Stages 1, 2 and 4, and at the end), and the
+real-simulator recording (`just compare-recordings`, identical to a baseline taken
+before Stage 5 after Stages 5, 5–6, 7–8–1 and at the end, with the same timing
+stages and call counts). `just verify-sim-roundtrip` passes 8/8. The import-layer
+allowlist is empty.
+
+Where the code differs from the plan below, and why:
+
+- **Stage 5. `restore_observation` matches the run's observation closely, not
+  pixel for pixel.** After `mj_step`, MuJoCo's body and camera poses still
+  describe the start of the last 2 ms substep, and a restore recomputes them for
+  the state itself. Measured right after a reset: images differ by under 0.1 grey
+  level on average (0.08% and 3.5% of pixels on the two cameras), proprioception
+  by under 3e-4. The sim state itself restores exactly. The verify script checks
+  that tolerance, and that two restores of one state are identical.
+- **Stage 5. One `Perturbation` base class, not a protocol plus `PerturbationBase`.**
+  The defaults (no-op hooks, identity `task_description`, `from_config`) live on
+  the base, so the three `getattr(..., True)` guesses and the `_CATEGORICAL` table
+  are gone. `swap_task_files` takes a rewrite function, so the "simulator not yet
+  built" check sits beside the private attributes it guards.
+- **Stage 5. New `tests/unit/test_private_attributes.py`:** each LeRobot/LIBERO
+  private attribute may be used only in `env/libero.py` or `policy/smolvla.py`.
+- **Stage 6. The fake is `tests/fakes/policy.py`**, next to Stage 0's fakes.
+  Policy loading moved out of `eval`, so its tests (`test_policy_loading.py`, was
+  `test_eval_pipeline.py`) now run in the CPU job.
+- **Stage 7. `Decider` is a small class, not a function.** It holds the policy,
+  processors, K and timer, and takes the perturbation as a callable: the
+  `action_post` timer stage has always included applying it, and the stage counts
+  must not change.
+- **Stage 8. The record CLI merged into `eval/cli.py`** (`record_main`); the two
+  were near copies. `docs/failures.md` is now updated by `just publish-failures`,
+  never by a run.
+- **Stage 1. `ShardLayout.provenance` returns the schema's own `RunProvenance`.**
+  Every `run.json` on disk validates, and every stored strength was already a
+  float, so the `perturbation_strength=None` question (ground rule 5) no longer
+  arises. `load_shard_signals` already read one episode at a time.
+- **Stage 2. `EpisodeSignal` is gone:** its two perturbation fields were never
+  read, so the extractor returns the same `TraceRow` the scripts read back, one
+  episode shape instead of two. No `EpisodeMeta`: nothing else would use it.
+  `TraceRow` compares by identity, since value equality over arrays has no single
+  answer.
+- **Stage 4. No `CorpusPaths`, `GuardEvalConfig` or `guard/cli.py`.** The roots'
+  defaults are `ShardLayout`'s (one source), `ShardLayout.add_args` adds the four
+  root flags to every script that reads shards, `TRACES`/`LABELS` sit beside it in
+  `corpus/layout.py`, and `EVAL_FRACTION` beside the split. Five scripts gained
+  root flags they do not use; every default is unchanged (checked by parsing each
+  script's arguments). Budgets come from the metric contract.
+- **Also removed:** the unused package-level re-exports (`backstop`, `eval`,
+  `record`), the `dataset_features` wrapper, a lazy-numpy helper (numpy is a core
+  dependency now) and a second `as_numpy`.
 
 ## Stage C: delete the rest — done
 
@@ -154,7 +208,7 @@ onsets, so this is a gap in the data, not a bug.
 **Size:** `src/` + `scripts/` +224 code lines (the two comparison tools), tests +354.
 The estimate below had not counted the tools as scripts.
 
-## Stage 5: simulator seam
+## Stage 5: simulator seam — done
 
 **Plain version:** every reach into LIBERO's or lerobot's private parts goes through one
 file, so an upgrade breaks one place, loudly.
@@ -181,7 +235,7 @@ file, so an upgrade breaks one place, loudly.
     the reset observation pixel for pixel.
 - **Verify:** golden digests, perturb tests, sim smoke.
 
-## Stage 6: policy seam
+## Stage 6: policy seam — done
 
 **Plain version:** the policy interface describes how the loop *actually* calls the
 policy, and everything lerobot-specific lives in one module.
@@ -198,13 +252,13 @@ policy, and everything lerobot-specific lives in one module.
   - `last_action_chunk`
   - `sample_chunks(obs, k, *, episode_seed, step)`
 
-  It is **justified by** a numpy-only `FakeChunkPolicy` in `tests/unit/fakes.py`, which
+  It is **justified by** a numpy-only `FakeChunkPolicy` in `tests/fakes/policy.py`, which
   lets Stage 7 and the recovery runner be tested in the CPU job.
 - Delete the unused `OpenVLAAdapter` stub and `make_adapter`. `UnsupportedPolicyError`
   stays, raised for `policy.type: openvla`.
 - **Verify:** golden digests, `test_eval_pipeline`, `test_rollout_loop`.
 
-## Stage 7: split `_rollout_one` (highest risk)
+## Stage 7: split `_rollout_one` (highest risk) — done
 
 **Plain version:** the one long function becomes four small pieces with one job each.
 The recovery runner can then reuse the pieces instead of copying the loop.
@@ -231,7 +285,7 @@ The recovery runner can then reuse the pieces instead of copying the loop.
 - **Stop rule:** if a digest moves and the cause isn't found within an hour, revert and
   split the stage smaller.
 
-## Stage 8: thin `run_pipeline`
+## Stage 8: thin `run_pipeline` — done
 
 - Split it into `build_runtime(cfg)`, `record_run(runtime, cfg)` and
   `finalize_report(cfg, stats)`.
@@ -240,7 +294,7 @@ The recovery runner can then reuse the pieces instead of copying the loop.
 - **Verify:** `test_cli`, `test_eval_pipeline`, and `run.json`/eval report identical
   apart from timing.
 
-## Stage 1: `backstop/corpus/` reader
+## Stage 1: `backstop/corpus/` reader — done
 
 **Plain version:** one package knows where recordings live and how to read them, so
 `guard` and `label` stop borrowing from each other.
@@ -271,7 +325,7 @@ The recovery runner can then reuse the pieces instead of copying the loop.
 - **Verify:** snapshot identical, and the `guard -> label` entries leave the import
   allowlist.
 
-## Stage 2: typed episodes
+## Stage 2: typed episodes — done
 
 - `corpus/episode.py`: `EpisodeKey(NamedTuple)`. It hashes and compares like
   `tuple[str, int]`, so it replaces `traces.Key`, bare tuples and `split.EpisodeKey`
@@ -291,7 +345,7 @@ The recovery runner can then reuse the pieces instead of copying the loop.
 - **Stop rule:** if a script needs more than about 30 lines of adapters, leave it on raw
   rows with a TODO.
 
-## Stage 4: paths/guard config and shared constants
+## Stage 4: paths/guard config and shared constants — done
 
 - `config.py` gains `CorpusPaths` (dataset roots, traces, labels) and
   `GuardEvalConfig(eval_fraction=0.3, seed=0)`.
@@ -324,8 +378,8 @@ L4  eval                         -> record, env, policy
 scripts                          -> any package module; never another script
 ```
 
-These rules are enforced by `test_import_layers.py` (Stage 0), whose allowlist must be
-empty by the end of Stage 5. The private-attribute test from Stage 5 backs them up.
+These rules are enforced by `test_import_layers.py` (Stage 0), whose allowlist is
+now empty. The private-attribute test from Stage 5 backs them up.
 
 ## The recovery runner, afterwards
 

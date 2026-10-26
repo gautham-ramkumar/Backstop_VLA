@@ -21,26 +21,18 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from backstop.corpus.layout import ShardLayout
+from backstop.corpus.layout import LABELS, ShardLayout
 from backstop.label.extract import build_shard_rows, load_labels, merge_rows, write_labels
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--lerobot-root", default="data/lerobot")
-    parser.add_argument("--privileged-root", default="data/privileged")
-    parser.add_argument("--eval-root", default="artifacts/eval")
-    parser.add_argument("--configs-root", default="configs/record")
-    parser.add_argument("--labels-path", default="artifacts/corpus/labels.jsonl")
+    ShardLayout.add_args(parser)
+    parser.add_argument("--labels-path", type=Path, default=LABELS)
     parser.add_argument("--shard", action="append", help="limit to one or more shards (repeatable)")
     args = parser.parse_args(argv)
 
-    layout = ShardLayout(
-        Path(args.lerobot_root),
-        Path(args.privileged_root),
-        Path(args.eval_root),
-        Path(args.configs_root),
-    )
+    layout = ShardLayout.from_args(args)
     shards = args.shard or layout.discover_shards()
     if not shards:
         print(f"no shards found under {args.privileged_root}")

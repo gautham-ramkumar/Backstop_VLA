@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import numpy as np
+
 
 class UnsupportedPolicyError(NotImplementedError):
     """Raised for a policy type the config accepts but nothing implements yet."""
@@ -49,3 +51,10 @@ class Processors:
     pre: Any
     post: Any
     env_post: Any
+
+
+def as_numpy(value: Any) -> np.ndarray:
+    """A policy output (a torch tensor, on any device) or anything array-like, as numpy."""
+    if hasattr(value, "detach"):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)

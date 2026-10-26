@@ -45,12 +45,12 @@ from typing import Any
 import numpy as np
 
 from backstop.corpus.episode import EpisodeKey
-from backstop.corpus.layout import ShardLayout
+from backstop.corpus.layout import TRACES, ShardLayout
 from backstop.env.libero import scene_objects
 from backstop.guard.presence import PresenceGate
 from backstop.guard.scoring import auroc, fit_stopwatch_from_rows
 from backstop.guard.signals import instructed_object_phrase
-from backstop.guard.split import stratified_split
+from backstop.guard.split import EVAL_FRACTION, stratified_split
 from backstop.guard.stopwatch import stop_step
 from backstop.guard.traces import OBJECT_SHARD, TraceRow, load_traces, series_map, spatial_pool
 from backstop.guard.vision import (
@@ -58,6 +58,7 @@ from backstop.guard.vision import (
     detector_scores,
     first_agentview_frame,
 )
+from backstop.schema import load_metric_contract
 
 GROCERIES = (
     "alphabet soup",
@@ -72,7 +73,7 @@ GROCERIES = (
     "tomato sauce",
 )
 NAMES = ("black bowl", "moka pot", *GROCERIES)
-BUDGET = 0.05
+BUDGET = load_metric_contract().false_stop_budget
 
 
 def _scene_objects(rows: list[TraceRow]) -> list[set[str]]:
@@ -193,16 +194,15 @@ def gate_report(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--traces", type=Path, default=Path("artifacts/guard/traces.jsonl"))
-    parser.add_argument("--lerobot-root", type=Path, default=Path("data/lerobot"))
-    parser.add_argument("--eval-root", type=Path, default=Path("artifacts/eval"))
+    parser.add_argument("--traces", type=Path, default=TRACES)
+    ShardLayout.add_args(parser)
     parser.add_argument(
         "--references",
         type=Path,
         default=Path("artifacts/guard/presence/reference_frames.npz"),
     )
     parser.add_argument("--output", type=Path, default=Path("artifacts/guard/presence/report.json"))
-    parser.add_argument("--eval-fraction", type=float, default=0.3)
+    parser.add_argument("--eval-fraction", type=float, default=EVAL_FRACTION)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -210,7 +210,7 @@ def main() -> None:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     rows = load_traces(args.traces)
-    layout = ShardLayout(lerobot_root=args.lerobot_root, eval_root=args.eval_root)
+    layout = ShardLayout.from_args(args)
     images = []
     for row in rows:
         images.append(first_agentview_frame(layout.dataset_root(row.shard), row.episode_index))

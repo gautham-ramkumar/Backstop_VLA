@@ -26,13 +26,9 @@ from backstop.record.privileged import PrivilegedWriter
 from backstop.record.sink import EpisodeSink
 from backstop.record.step import Decider
 from backstop.record.timing import StageTimer
-from backstop.schema import lerobot_features
+from backstop.schema import CONTROL_FPS, lerobot_features
 
 logger = logging.getLogger(__name__)
-
-
-def dataset_features(k_samples: int, image_hw: tuple[int, int] = (360, 360)) -> dict[str, dict]:
-    return lerobot_features(k_samples, image_hw)
 
 
 def create_dataset(
@@ -48,11 +44,13 @@ def create_dataset(
     Always destroying it is how a stray re-run once cost a night of GPU.
     """
     _assert_privileged_decided(cfg)
+    if fps != CONTROL_FPS:
+        raise ValueError(f"the env steps at {fps} Hz; every corpus row assumes {CONTROL_FPS} Hz")
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: PLC0415
 
     root = Path(cfg.record.root)
-    features = dataset_features(cfg.record.k_samples, image_hw)
+    features = lerobot_features(cfg.record.k_samples, image_hw)
     mode = cfg.record.on_existing
 
     if _is_populated(root):

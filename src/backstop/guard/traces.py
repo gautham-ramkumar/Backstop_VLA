@@ -26,7 +26,6 @@ import numpy as np
 from backstop.corpus.episode import EpisodeKey
 from backstop.guard.split import stratified_split
 
-FPS = 20
 # Left out of the pooled spatial corpus: `language_absent` has no task to
 # fail at, and `object_clean` is a different suite (evaluated on its own).
 EXCLUDED_SHARDS = frozenset({"language_absent", "object_clean"})

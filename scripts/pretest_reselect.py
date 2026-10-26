@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from backstop.corpus.episode import EpisodeKey
-from backstop.corpus.layout import ShardLayout
+from backstop.corpus.layout import LABELS, ShardLayout
 from backstop.guard.extract import iter_episode_samples
 from backstop.guard.traces import EXCLUDED_SHARDS, LabelView, load_labels
 from backstop.recover.reselect import RESELECT_METRICS, reselect_metrics
@@ -47,16 +47,15 @@ def onset_step_mask(labels: dict[EpisodeKey, LabelView]) -> np.ndarray:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--labels", type=Path, default=Path("artifacts/corpus/labels.jsonl"))
-    parser.add_argument("--lerobot-root", type=Path, default=Path("data/lerobot"))
-    parser.add_argument("--eval-root", type=Path, default=Path("artifacts/eval"))
+    parser.add_argument("--labels", type=Path, default=LABELS)
+    ShardLayout.add_args(parser)
     parser.add_argument("--output", type=Path, default=Path("artifacts/recovery/pretest.json"))
     args = parser.parse_args()
 
     labels = load_labels(args.labels)
     matched = onset_step_mask(labels)
     shards = sorted({shard for shard, _ in labels} - EXCLUDED_SHARDS)
-    layout = ShardLayout(lerobot_root=args.lerobot_root, eval_root=args.eval_root)
+    layout = ShardLayout.from_args(args)
 
     failure: Pooled = {name: [] for name in RESELECT_METRICS}
     success: Pooled = {name: [] for name in RESELECT_METRICS}
