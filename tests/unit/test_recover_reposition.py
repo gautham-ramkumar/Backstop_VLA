@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 from pydantic import ValidationError
@@ -86,8 +84,3 @@ def test_config_rejects_out_of_range_values() -> None:
         RepositionConfig(max_action=1.5)
     with pytest.raises(ValidationError):
         RepositionConfig(lift_m=-0.1)
-
-
-def test_shipped_config_loads() -> None:
-    path = Path(__file__).resolve().parents[2] / "configs" / "recovery" / "reposition.yaml"
-    assert RepositionConfig.from_yaml(path) == RepositionConfig()

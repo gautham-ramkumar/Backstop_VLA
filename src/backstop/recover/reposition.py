@@ -28,10 +28,8 @@ counting steps.
 from __future__ import annotations
 
 from enum import Enum
-from pathlib import Path
 
 import numpy as np
-import yaml
 from pydantic import BaseModel, Field
 
 from backstop.schema import ACTION_DIM, EEF_POS, GRIPPER_INDEX
@@ -57,11 +55,6 @@ class RepositionConfig(BaseModel):
     max_steps_per_phase: int = Field(default=30, ge=1)
     max_action: float = Field(default=0.5, gt=0.0, le=1.0)
     tolerance_m: float = Field(default=0.01, gt=0.0)
-
-    @classmethod
-    def from_yaml(cls, path: str | Path) -> RepositionConfig:
-        with Path(path).open() as handle:
-            return cls.model_validate(yaml.safe_load(handle) or {})
 
     @property
     def max_total_steps(self) -> int:

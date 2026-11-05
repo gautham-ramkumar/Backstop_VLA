@@ -1,10 +1,57 @@
 # Recovery — design note
 
-**Status: deferred, not in scope for weeks 1–6.** This note exists so the option stays open
-at a cost of one Week-2 change (full simulator state capture) rather than a re-record. It is
-an argument and a set of open questions, not a commitment.
+**Status: built and piloted (2026-11-04). Lift-and-back-off does not help this policy:
+on 20 guarded episodes it rescued 1 failure and spoiled 1 good run, a change of 0.**
+The kill criterion below is met, so the full run was not made. The original design
+note follows the results.
 
 The scope line in the README stands: *the guard halts and flags, it does not replan.*
+
+## Pilot result
+
+**Setup.** The frozen 5% rule (`artifacts/guard/frozen/rule_05.json`, calibrated without
+the clean shard) fires on 32 of the 100 held-out clean episodes: 30 failures and 2 good
+runs. The other 68 run exactly as recorded with the guard on. The pilot ran the first 20
+triggered episodes (`scripts/run_recovery.py --limit 20`), each restored at its trigger
+step from the recorded sim state, then lift and back off, then the policy again: at most 2
+recoveries, a 20-step cooldown, the stopwatch restarted after each recovery, the 280-step
+cap unchanged (`configs/recovery/recovery.yaml`). Results in `artifacts/recovery/pilot/`.
+
+| | count |
+|---|---:|
+| episodes paired | 20 (19 failures, 1 good run with the guard off) |
+| rescued (failure → success) | **1** (episode 1, after its second recovery) |
+| spoiled (success → failure) | **1** (episode 63: a slow good run the clock stopped at step 140) |
+| paired success-rate change | **0.0** (McNemar p = 1.0) |
+| recoveries per episode | 1.7 on average |
+| extra steps per episode | −10.8 (halts after the second recovery end some runs early) |
+
+ADR-006's report: `artifacts/recovery/pilot/recovery_eval.json`.
+
+**Why it fails.** The policy goes straight back to the same stall. After a recovery the
+guard fires again a median of 33 steps later, just past the cooldown, on the signal in 13
+of 14 second attempts. 15 of the 20 triggers were the clock at step 140, by which point
+the run has already been stuck for most of its length. Of the 5 runs the signal caught
+early (steps 48–101), recovery rescued 1.
+
+**Checked along the way.**
+- *Branching is the live run.* Three episodes run from their reset with the guard live
+  (`--live`) first fired at exactly the offline trigger steps (48, 51, 80).
+- *Branching is repeatable.* The same episodes branched twice gave the same outcomes,
+  step for step.
+- *But a recovery is chaotic.* Episode 1 succeeded branched and failed live: the
+  restored image differs from the live one by under 0.1 grey level, and after a
+  recovery that is enough to take a different path. A guard-on outcome is one sample of
+  what recovery does from that state, not a fixed property of it.
+- *The motion looks right.* GIFs of the first five (`artifacts/recovery/pilot/gifs/`):
+  the arm opens, lifts clear and backs off. In episode 2 the guard fired with a bowl in
+  the gripper, and opening dropped it back on the table, the near-grasp case flagged
+  below.
+
+**What would be next, if anything.** Re-selection has no headroom (the pre-test below).
+Re-wording the instruction is the remaining cheap recovery. A recovery that changes the
+policy's situation more than a 10 cm move, such as a different approach pose, is a design
+question, not a parameter sweep on this pilot.
 
 ---
 

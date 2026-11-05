@@ -9,6 +9,8 @@ from typing import Any
 from backstop.schema import (
     FORBIDDEN_HEADLINES,
     HEADLINE_METRIC,
+    RECOVERY_ALONGSIDE,
+    RECOVERY_HEADLINE,
     MetricContract,
     RunProvenance,
     load_metric_contract,
@@ -139,6 +141,26 @@ def write_secondary_report(
         )
         + "\n"
     )
+    return path
+
+
+def write_recovery_report(*, output_dir: Path, values: dict[str, Any]) -> Path:
+    """Recovery evaluation writer (ADR-006).
+
+    The headline is the paired change in success rate. A success rate is a
+    forbidden guard headline, and a recovery number without what it cost would
+    be the same mistake, so the report refuses to be written without every
+    `RECOVERY_ALONGSIDE` value beside the headline.
+    """
+    missing = [name for name in (RECOVERY_HEADLINE, *RECOVERY_ALONGSIDE) if name not in values]
+    if missing:
+        raise HeadlineMetricError(
+            f"a recovery report needs {missing} (see docs/adr/006-recovery-metric.md)"
+        )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "recovery_eval.json"
+    payload = {"headline_metric": RECOVERY_HEADLINE, "values": values}
+    path.write_text(json.dumps(payload, indent=2) + "\n")
     return path
 
 

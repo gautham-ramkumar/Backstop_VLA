@@ -305,7 +305,7 @@ def rollout_episode(ctx: RolloutContext, spec: EpisodeSpec) -> EpisodeOutcome:
         )
         with timer("env_step"):
             raw_obs, _reward, terminated, truncated, info = vec_env.step(decision.action)
-        success = _read_success(info, success)
+        success = read_success(info, success)
         done = bool(terminated[0] or truncated[0]) or step + 1 == max_steps
         ctx.sink.add_frame(prepared.frame_obs, decision, success=success and done, task=task)
         step += 1
@@ -325,7 +325,7 @@ def rollout_episode(ctx: RolloutContext, spec: EpisodeSpec) -> EpisodeOutcome:
     return EpisodeOutcome(success, step)
 
 
-def _read_success(info: dict[str, Any], current: bool) -> bool:
+def read_success(info: dict[str, Any], current: bool) -> bool:
     if current:
         return True
     if "final_info" in info:

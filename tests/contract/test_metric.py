@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -8,12 +9,16 @@ from backstop.eval.report import (
     HeadlineMetricError,
     write_eval_report,
     write_guard_report,
+    write_recovery_report,
     write_secondary_report,
 )
 from backstop.schema import (
     DEFAULT_FALSE_STOP_BUDGET,
     DETECTION_METRIC,
+    FORBIDDEN_HEADLINES,
     HEADLINE_METRIC,
+    RECOVERY_ALONGSIDE,
+    RECOVERY_HEADLINE,
     RunProvenance,
     load_metric_contract,
 )
@@ -131,3 +136,25 @@ def test_policy_baseline_report_does_not_claim_guard_headline(tmp_path: Path) ->
     assert "policy_success_rate" in payload
     assert "locked_not_yet_measured" in payload
     assert f'"headline_metric": "{HEADLINE_METRIC}"' in payload
+
+
+def _recovery_values() -> dict[str, object]:
+    return {RECOVERY_HEADLINE: 0.05, **dict.fromkeys(RECOVERY_ALONGSIDE, 1)}
+
+
+def test_recovery_report_needs_its_cost_beside_the_headline(tmp_path: Path) -> None:
+    path = write_recovery_report(output_dir=tmp_path, values=_recovery_values())
+    assert json.loads(path.read_text())["headline_metric"] == RECOVERY_HEADLINE
+    for name in (RECOVERY_HEADLINE, "intervention_rate", "spoiled", "mean_extra_steps"):
+        values = _recovery_values()
+        del values[name]
+        with pytest.raises(HeadlineMetricError, match=name):
+            write_recovery_report(output_dir=tmp_path, values=values)
+
+
+def test_the_recovery_contract_leaves_the_guard_contract_alone(tmp_path: Path) -> None:
+    """A bare success rate is still not a guard headline (ADR-005 stands)."""
+    assert "success_rate" in FORBIDDEN_HEADLINES
+    assert RECOVERY_HEADLINE not in FORBIDDEN_HEADLINES
+    with pytest.raises(HeadlineMetricError):
+        write_guard_report(output_dir=tmp_path, headline_metric="success_rate", values={})

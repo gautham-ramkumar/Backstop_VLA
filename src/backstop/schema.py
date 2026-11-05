@@ -28,6 +28,18 @@ GRIPPER_INDEX = 6
 FORBIDDEN_HEADLINES = frozenset({"accuracy", "raw_accuracy", "success_rate"})
 # ADR-005: mean stop step saved over a stopwatch, both held to the same budget.
 HEADLINE_METRIC = "stop_time_saved_at_false_stop"
+# ADR-006: a recovery run's headline is the paired change in success rate, and it
+# is never reported without what it cost and how often the guard stepped in.
+RECOVERY_HEADLINE = "paired_success_rate_change"
+RECOVERY_ALONGSIDE = (
+    "n_paired",
+    "rescued",
+    "spoiled",
+    "p_value",
+    "intervention_rate",
+    "max_attempts",
+    "mean_extra_steps",
+)
 # ADR-001's headline, kept as a secondary metric under ADR-005.
 DETECTION_METRIC = "detection_at_false_stop"
 DEFAULT_FALSE_STOP_BUDGET = 0.05
