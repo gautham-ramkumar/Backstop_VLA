@@ -1,0 +1,42 @@
+# Pilot, not corpus: does obstacle (strength 1.0, the carton squarely on the carry path) make
+# the policy push into it before the stopwatch? 1 episode x 10 tasks at K=1 (the guard
+# signal is not measured here). Outputs stay under artifacts/pilot, outside data/.
+seed: 0
+output_dir: artifacts/pilot/obstacle/s10/eval
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 10
+env:
+  type: libero
+  task: libero_spatial
+  task_ids: null
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 1
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 1
+  repo_id: local/pilot_obstacle_s10
+  root: artifacts/pilot/obstacle/s10/dataset
+  on_existing: fail
+  shard: obstacle
+  perturbation: obstacle
+  perturbation_strength: 1.0
+  privileged: true
+  privileged_root: artifacts/pilot/obstacle/s10/privileged
+wandb:
+  enabled: false
+  mode: disabled
+tolerance:
+  min_success_rate: 0.3
+  max_success_rate: 0.7
+  fallback_num_steps: 1
+  enforce: false

@@ -1,0 +1,44 @@
+# Pilot, not corpus: does grasp_slip (friction strength 1.0, mass x60) make
+# failures drop the bowl before the stopwatch? 2 episodes x 10 tasks at K=1 (the guard
+# signal is not measured here). Outputs stay under artifacts/pilot, outside data/.
+seed: 0
+output_dir: artifacts/pilot/grasp_slip/s10_m60/eval
+policy:
+  type: smolvla
+  path: HuggingFaceVLA/smolvla_libero
+  revision: 6721902bc4d61e50a3bfdb11dfb4cb626f05d102
+  device: cuda
+  n_action_steps: 1
+  num_steps: 10
+env:
+  type: libero
+  task: libero_spatial
+  task_ids: null
+  control_mode: relative
+  init_states: true
+  mujoco_gl: osmesa
+eval:
+  n_episodes: 2
+  batch_size: 1
+  max_parallel_tasks: 1
+record:
+  enabled: true
+  k_samples: 1
+  repo_id: local/pilot_grasp_slip_s10_m60
+  root: artifacts/pilot/grasp_slip/s10_m60/dataset
+  on_existing: fail
+  shard: grasp_slip
+  perturbation: grasp_slip
+  perturbation_strength: 1.0
+  privileged: true
+  privileged_root: artifacts/pilot/grasp_slip/s10_m60/privileged
+  perturbation_kwargs:
+    mass_scale: 60.0
+wandb:
+  enabled: false
+  mode: disabled
+tolerance:
+  min_success_rate: 0.3
+  max_success_rate: 0.7
+  fallback_num_steps: 1
+  enforce: false

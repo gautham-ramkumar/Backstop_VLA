@@ -33,9 +33,11 @@ from backstop.perturb import (  # noqa: E402
     ActionNoise,
     Camera,
     Distractor,
+    GraspSlip,
     Lighting,
     NoPerturbation,
     ObjectPose,
+    Obstacle,
     Paraphrase,
     episode_rng,
     make_perturbation,
@@ -1008,3 +1010,172 @@ def test_clean_arm_is_the_same_code_path() -> None:
     assert isinstance(clean, NoPerturbation)
     assert clean.on_reset(_control_env(), np.random.default_rng(0)) is False
     np.testing.assert_array_equal(clean.perturb_action(action, np.random.default_rng(0)), action)
+
+
+def _grip_env() -> Any:
+    """Two finger pads, a two-geom bowl (the instructed object), a plate and a table."""
+    geoms = [
+        ("gripper0_finger1_pad_collision", "gripper0_finger_joint1_tip", 2.0),
+        ("gripper0_finger2_pad_collision", "gripper0_finger_joint2_tip", 2.0),
+        ("akita_black_bowl_1_g0", "akita_black_bowl_1_main", 0.95),
+        ("akita_black_bowl_1_g1", "akita_black_bowl_1_main", 0.95),
+        ("plate_1_g0", "plate_1_main", 0.95),
+        ("table_collision", "table", 1.0),
+    ]
+    bodies = sorted({body for _, body, _ in geoms})
+    model = SimpleNamespace(
+        ngeom=len(geoms),
+        geom_id2name=lambda g: geoms[g][0],
+        geom_bodyid=[bodies.index(body) for _, body, _ in geoms],
+        body_id2name=lambda b: bodies[b],
+        geom_friction=np.array([[f, 0.005, 0.0001] for _, _, f in geoms]),
+        body_mass=np.full(len(bodies), 0.01),
+        body_inertia=np.full((len(bodies), 3), 1e-5),
+    )
+    env = SimpleNamespace(
+        sim=SimpleNamespace(model=model), obj_of_interest=["akita_black_bowl_1", "plate_1"]
+    )
+    return SimpleNamespace(env=env)
+
+
+def test_grasp_slip_lowers_only_the_grip_contact() -> None:
+    control_env = _grip_env()
+    perturbation = GraspSlip(1.0)
+    assert perturbation.on_reset(control_env, np.random.default_rng(0)) is False
+    friction = control_env.env.sim.model.geom_friction
+    scale = 1.0 - families.GRASP_FRICTION_DROP
+    np.testing.assert_allclose(
+        friction[:4, 0], [2.0 * scale, 2.0 * scale, 0.95 * scale, 0.95 * scale]
+    )
+    np.testing.assert_allclose(friction[4:, 0], [0.95, 1.0])  # plate and table untouched
+    np.testing.assert_allclose(friction[:, 1:], [[0.005, 0.0001]] * 6)  # only sliding friction
+    assert perturbation.params()["n_geoms"] == 4
+
+
+def test_grasp_slip_does_not_compound_over_resets() -> None:
+    control_env = _grip_env()
+    perturbation = GraspSlip(0.5)
+    for _ in range(3):
+        perturbation.on_reset(control_env, np.random.default_rng(0))
+    expected = 2.0 * (1.0 - families.GRASP_FRICTION_DROP * 0.5)
+    assert control_env.env.sim.model.geom_friction[0, 0] == pytest.approx(expected)
+
+
+def test_grasp_slip_refuses_a_gripper_it_cannot_find() -> None:
+    control_env = _grip_env()
+    names = ["finger1", "finger2", "akita_black_bowl_1_g0", "akita_black_bowl_1_g1", "p", "t"]
+    control_env.env.sim.model.geom_id2name = lambda g: names[g]
+    with pytest.raises(RuntimeError, match="gripper pad"):
+        GraspSlip(0.5).on_reset(control_env, np.random.default_rng(0))
+
+
+def test_grasp_slip_is_a_registered_numeric_family() -> None:
+    perturbation = make_perturbation("grasp_slip", 0.3)
+    assert isinstance(perturbation, GraspSlip) and perturbation.needs_env_hook
+
+
+def test_grasp_slip_scales_the_object_mass_and_inertia_together() -> None:
+    control_env = _grip_env()
+    perturbation = GraspSlip(0.5, mass_scale=20.0)
+    for _ in range(2):
+        perturbation.on_reset(control_env, np.random.default_rng(0))
+    model = control_env.env.sim.model
+    names = [model.body_id2name(body) for body in range(len(model.body_mass))]
+    index = names.index("akita_black_bowl_1_main")
+    assert model.body_mass[index] == pytest.approx(0.2)
+    np.testing.assert_allclose(model.body_inertia[index], 2e-4)
+    others = [body for body in range(len(names)) if body != index]
+    np.testing.assert_allclose(model.body_mass[others], 0.01)
+    assert perturbation.params()["target_mass_kg"] == pytest.approx(0.2)
+
+
+# --- obstacle --------------------------------------------------------------
+
+
+def _obstacle_env(bowl_xy=(0.0, 0.0), plate_xy=(0.2, 0.0)) -> Any:
+    """Carton free joint at qpos 0 / dof 0; bowl and plate body positions."""
+    bodies = {"bowl_1_main": 1, "plate_1_main": 2}
+    body_xpos = np.zeros((3, 3))
+    body_xpos[1, :2], body_xpos[2, :2] = bowl_xy, plate_xy
+    model = SimpleNamespace(
+        joint_name2id=lambda name: 0,
+        jnt_dofadr=np.array([0]),
+        jnt_bodyid=np.array([3]),
+        body_name2id=bodies.__getitem__,
+    )
+    data = SimpleNamespace(
+        qpos=np.array([0.33, -0.22, 0.97, 1.0, 0.0, 0.0, 0.0]),
+        qvel=np.zeros(6),
+        body_xpos=body_xpos,
+    )
+    sim = SimpleNamespace(model=model, data=data, forward=lambda: None)
+    return SimpleNamespace(env=SimpleNamespace(sim=sim, obj_of_interest=["bowl_1", "plate_1"]))
+
+
+def _ready_obstacle(monkeypatch, strength: float, accept=lambda xy: True) -> Obstacle:
+    monkeypatch.setattr(families, "_settle", lambda control_env: None)
+    monkeypatch.setattr(families, "_table_bounds", lambda c: (np.zeros(2), np.ones(2)))
+    monkeypatch.setattr(
+        families,
+        "_object_is_settled",
+        lambda sim, **kw: accept(tuple(np.round(sim.data.qpos[:2], 6))),
+    )
+    obstacle = Obstacle(strength)
+    obstacle._qpos_adr = 0
+    return obstacle
+
+
+def test_obstacle_at_full_strength_stands_on_the_bowl_to_plate_line(monkeypatch) -> None:
+    control_env = _obstacle_env()
+    obstacle = _ready_obstacle(monkeypatch, 1.0)
+
+    assert obstacle.on_reset(control_env, np.random.default_rng(0)) is False
+
+    np.testing.assert_allclose(control_env.env.sim.data.qpos[:2], [0.1, 0.0])
+    assert obstacle.params()["accepted"] is True
+    assert obstacle.params()["path_fraction"] == 0.5
+
+
+def test_obstacle_at_zero_strength_stands_beside_the_line(monkeypatch) -> None:
+    control_env = _obstacle_env()
+    _ready_obstacle(monkeypatch, 0.0).on_reset(control_env, np.random.default_rng(0))
+
+    np.testing.assert_allclose(
+        control_env.env.sim.data.qpos[:2], [0.1, families.OBSTACLE_MAX_OFFSET_M]
+    )
+
+
+def test_obstacle_tries_the_next_point_when_one_does_not_settle(monkeypatch) -> None:
+    control_env = _obstacle_env()
+    obstacle = _ready_obstacle(monkeypatch, 1.0, accept=lambda xy: xy != (0.1, 0.0))
+
+    obstacle.on_reset(control_env, np.random.default_rng(0))
+
+    np.testing.assert_allclose(control_env.env.sim.data.qpos[:2], [0.08, 0.0])
+    assert obstacle.params()["path_fraction"] == 0.4
+
+
+def test_obstacle_that_fits_nowhere_is_left_out_and_flagged(monkeypatch) -> None:
+    control_env = _obstacle_env()
+    obstacle = _ready_obstacle(monkeypatch, 1.0, accept=lambda xy: False)
+
+    obstacle.on_reset(control_env, np.random.default_rng(0))
+
+    np.testing.assert_allclose(control_env.env.sim.data.qpos[:2], [0.33, -0.22])
+    assert obstacle.params()["accepted"] is False
+    assert obstacle.params()["path_fraction"] is None
+
+
+def test_obstacle_before_prepare_env_refuses(monkeypatch) -> None:
+    obstacle = _ready_obstacle(monkeypatch, 1.0)
+    obstacle._qpos_adr = None
+
+    with pytest.raises(RuntimeError, match="prepare_env"):
+        obstacle.on_reset(_obstacle_env(), np.random.default_rng(0))
+
+
+def test_obstacle_is_a_registered_distractor_family() -> None:
+    perturbation = make_perturbation("obstacle", strength=0.7)
+
+    assert isinstance(perturbation, Obstacle)
+    assert isinstance(perturbation, Distractor)

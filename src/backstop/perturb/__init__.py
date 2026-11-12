@@ -18,8 +18,10 @@ from backstop.perturb.families import (
     ActionNoise,
     Camera,
     Distractor,
+    GraspSlip,
     Lighting,
     ObjectPose,
+    Obstacle,
     Paraphrase,
 )
 from backstop.perturb.wrapper import PerturbedEnv, attach
@@ -31,6 +33,8 @@ FAMILIES: dict[str, type[Perturbation]] = {
     ObjectPose.name: ObjectPose,
     ActionNoise.name: ActionNoise,
     Distractor.name: Distractor,
+    GraspSlip.name: GraspSlip,
+    Obstacle.name: Obstacle,
     AbsentTarget.name: AbsentTarget,
     Paraphrase.name: Paraphrase,
 }
@@ -41,6 +45,8 @@ __all__ = [
     "ActionNoise",
     "Camera",
     "Distractor",
+    "GraspSlip",
+    "Obstacle",
     "Lighting",
     "NoPerturbation",
     "ObjectPose",

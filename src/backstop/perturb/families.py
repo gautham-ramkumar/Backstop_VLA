@@ -16,6 +16,8 @@ Coverage against the four subsystems a failure can come from:
 | `absent_target`      | precondition  | instruction names a missing object |
 | `language_paraphrase`| control (none)| benign instruction reword, control arm |
 | `action_noise`       | control       | Gaussian on the executed action    |
+| `grasp_slip`         | control       | grip friction lowered at reset     |
+| `obstacle`           | control       | distractor moved onto the carry path |
 """
 
 from __future__ import annotations
@@ -57,6 +59,10 @@ DISTRACTOR_REGION_NAME = "distractor_region"
 DISTRACTOR_REGION_RANGE = (0.30, -0.25, 0.36, -0.19)
 DISTRACTOR_XY_JITTER_SIGMA_M = 0.02  # at strength 1.0, sigma of xy jitter around the sampled anchor
 DISTRACTOR_YAW_JITTER_RAD = 0.6  # at strength 1.0, matches OBJECT_YAW_SIGMA_RAD's magnitude
+GRASP_FRICTION_DROP = 0.95  # at strength 1.0, the grip keeps 5% of its sliding friction
+GRIPPER_PAD_TAG = "pad_collision"  # robosuite's fingertip contact geoms
+OBSTACLE_MAX_OFFSET_M = 0.08  # at strength 0, how far beside the bowl-to-plate line it stands
+OBSTACLE_PATH_FRACTIONS = (0.5, 0.4, 0.6, 0.3, 0.7)  # along the line, tried in order
 
 
 class Lighting(Perturbation):
@@ -295,6 +301,78 @@ class ActionNoise(Perturbation):
         return {"strength": self.strength, "sigma": self.sigma, "gripper_noised": False}
 
 
+class GraspSlip(Perturbation):
+    """Make the instructed object harder to hold, so a marginal grasp slips.
+
+    Scales the sliding friction of the gripper pads and of every geom of the
+    first object of interest (the one the instruction moves). Both, because
+    MuJoCo gives a contact the larger of its two geoms' friction: lowering
+    only the object would leave the pads' 2.0 in charge of the grip. The
+    object's contact with the table falls only as far as the table's own
+    friction (0.6 in LIBERO-Spatial, against the bowl's 0.95), so above
+    strength ~0.4 the bowl also slides on the table somewhat more easily.
+
+    Unlike `action_noise`, nothing is injected mid-run: whether a grasp holds
+    is decided when the policy grasps, which is where an early warning could
+    show. A drop that follows is the policy's own failure.
+
+    Friction alone is not enough: the LIBERO bowl weighs about 6 g, and the
+    policy carried it onto the plate with 5% of the grip's friction (measured).
+    `mass_scale` multiplies the object's mass and inertia, so the same grip has
+    a real weight to hold.
+
+    Values are set from the ones first seen for each geom and body, so a reset
+    that does not rebuild the model cannot compound the scaling.
+    """
+
+    name = "grasp_slip"
+
+    def __init__(self, strength: float, mass_scale: float = 1.0) -> None:
+        if mass_scale <= 0:
+            raise ValueError(f"mass_scale must be > 0, got {mass_scale}")
+        self.strength = float(strength)
+        self.mass_scale = float(mass_scale)
+        self._base: dict[str, Any] = {}
+        self._applied: dict[str, Any] = {}
+
+    def on_reset(self, control_env: Any, rng: np.random.Generator) -> bool:
+        model = control_env.env.sim.model
+        target = control_env.env.obj_of_interest[0]
+        scale = 1.0 - GRASP_FRICTION_DROP * self.strength
+        changed, bodies = [], set()
+        for geom in range(model.ngeom):
+            name = model.geom_id2name(geom) or ""
+            body = model.body_id2name(model.geom_bodyid[geom]) or ""
+            if GRIPPER_PAD_TAG in name or body.startswith(target):
+                base = self._base.setdefault(name, float(model.geom_friction[geom, 0]))
+                model.geom_friction[geom, 0] = base * scale
+                changed.append(name)
+            if body.startswith(target):
+                bodies.add(int(model.geom_bodyid[geom]))
+        if not any(GRIPPER_PAD_TAG in name for name in changed):
+            raise RuntimeError("no gripper pad geoms found; the grip would be unchanged")
+        mass = 0.0
+        for body in sorted(bodies):
+            key = f"body:{body}"
+            base_mass, base_inertia = self._base.setdefault(
+                key, (float(model.body_mass[body]), np.array(model.body_inertia[body], dtype=float))
+            )
+            model.body_mass[body] = base_mass * self.mass_scale
+            model.body_inertia[body] = base_inertia * self.mass_scale
+            mass += base_mass * self.mass_scale
+        self._applied = {
+            "target": target,
+            "friction_scale": scale,
+            "mass_scale": self.mass_scale,
+            "target_mass_kg": mass,
+            "n_geoms": len(changed),
+        }
+        return False
+
+    def params(self) -> dict[str, Any]:
+        return {"strength": self.strength, **self._applied}
+
+
 class AbsentTarget(Perturbation):
     """Instruct the robot to manipulate an object that is not in the scene.
 
@@ -505,6 +583,76 @@ class Distractor(Perturbation):
             "region": DISTRACTOR_REGION_RANGE,
             **self._applied,
         }
+
+
+class Obstacle(Distractor):
+    """Stand the distractor (a 16 cm milk carton) on the instructed bowl's way
+    to the plate, so a policy that carries the bowl along its usual path runs
+    into it.
+
+    The scene surgery and pairing are `Distractor`'s: the carton is compiled in
+    and spliced into every init-state row at its far-off region. At reset it is
+    moved to a point on the bowl-to-plate line, `(1 - strength) *
+    OBSTACLE_MAX_OFFSET_M` beside it, so strength 1 is squarely in the way.
+    Several points along the line are tried in order, and the first where the
+    carton settles upright without overlapping anything is kept; if none does,
+    the carton stays where the splice put it and `accepted` is False, so a
+    no-obstacle episode is never silently counted as one.
+
+    The policy never saw an object here, so the question this family answers
+    is whether it plans straight through it: a failure that is visible in the
+    proposed actions before contact, unlike a stall.
+    """
+
+    name = "obstacle"
+
+    def on_reset(self, control_env: Any, rng: np.random.Generator) -> bool:
+        from backstop.perturb.wrapper import SETTLE_STEPS  # noqa: PLC0415
+
+        super().on_reset(control_env, rng)
+        if self._qpos_adr is None:
+            raise RuntimeError("obstacle placed before prepare_env; the carton is not in the model")
+        sim = control_env.env.sim
+        bowl, plate = control_env.env.obj_of_interest[:2]
+        joint = sim.model.joint_name2id(f"{DISTRACTOR_OBJECT_NAME}_joint0")
+        adr, dof = self._qpos_adr, int(sim.model.jnt_dofadr[joint])
+        start = np.array(sim.data.qpos[adr : adr + 7])
+        saved = (np.array(sim.data.qpos), np.array(sim.data.qvel))
+        a = sim.data.body_xpos[sim.model.body_name2id(f"{bowl}_main")][:2].copy()
+        b = sim.data.body_xpos[sim.model.body_name2id(f"{plate}_main")][:2].copy()
+        line = b - a
+        side = np.array([-line[1], line[0]]) / max(np.linalg.norm(line), 1e-9)
+        offset = (1.0 - self.strength) * OBSTACLE_MAX_OFFSET_M
+        table_offset, table_half_xy = _table_bounds(control_env)
+        accepted, fraction = False, None
+        for fraction in OBSTACLE_PATH_FRACTIONS:
+            sim.data.qpos[:], sim.data.qvel[:] = saved
+            sim.data.qpos[adr : adr + 2] = a + fraction * line + offset * side
+            sim.forward()
+            for _ in range(SETTLE_STEPS):
+                _settle(control_env)
+            accepted = _object_is_settled(
+                sim,
+                body_id=int(sim.model.jnt_bodyid[joint]),
+                qpos_address=adr,
+                dof_address=dof,
+                base_z=float(start[2]),
+                table_offset=table_offset,
+                table_half_xy=table_half_xy,
+            )
+            if accepted:
+                break
+        if not accepted:
+            sim.data.qpos[:], sim.data.qvel[:] = saved
+            sim.forward()
+            fraction = None
+        self._applied.update(
+            accepted=accepted,
+            path_fraction=fraction,
+            offset_m=offset,
+            qpos=np.asarray(sim.data.qpos[adr : adr + 7], dtype=np.float64).tolist(),
+        )
+        return False
 
 
 def _inject_distractor(text: str) -> str:
