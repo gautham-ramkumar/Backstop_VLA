@@ -23,7 +23,20 @@ distinguishes them.
 | Grasps the bowl, places it on the plate | Approaches, never secures the bowl, runs out the clock |
 
 *Both from the recorded corpus, LIBERO-Spatial task 0, seeds 0 and 1. The failure clip is
-shown at 2× speed. Camera is the agentview render at 20 Hz.*
+shown at 2× speed. Camera is the agentview render at 20 Hz. Full-length MP4s:
+[success](docs/assets/success_ep000.mp4), [failure](docs/assets/failure_ep001.mp4).*
+
+### The guard on that failure
+
+![guard](docs/assets/guard_ep001.gif)
+
+The same failing run with the frozen 5% guard watching. The four sampled action chunks
+start to disagree as the grasp goes wrong; the score crosses the guard's line at step 48
+(2.4 s), and the guard stops the run there. A stopwatch alone would wait until step 140.
+The greyed trace is what the run does afterwards without the guard: it stalls to the
+280-step cap. This is one of the guard's better cases; across the held-out corpus it saves
+13.4 steps on average (below). [MP4](docs/assets/guard_ep001.mp4), made by
+`scripts/make_readme_videos.py` from the recording and the frozen rule.
 
 ---
 

@@ -15,6 +15,7 @@ wandb/
 outputs/
 eval_logs/
 *.mp4
+!docs/assets/*.mp4
 
 .env
 .hf_token
