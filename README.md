@@ -228,6 +228,12 @@ experiment's stop rule was met and the full run was not made. Re-selecting a dif
 sampled chunk was ruled out earlier: the executed chunk is no outlier among the samples
 (pre-test, [experiments](docs/experiments.md) #14).
 
+A second motion sends the arm back to its start pose and lets the policy start over.
+Fresh tries from the start state succeed on 42% of failed scenes, but the retry from
+home rescued 3 and spoiled 1 of the same 20 episodes (+0.10, McNemar p = 0.625). In 7 of
+the 20 the bowl had already moved, often because the arm was carrying it when the guard
+fired and opening the gripper dropped it.
+
 ---
 
 ## Problems we hit, and how they were found

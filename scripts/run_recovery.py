@@ -13,6 +13,8 @@ checks the branching shortcut.
 
     uv run python scripts/run_recovery.py --limit 20 --gifs 5   # the pilot
     uv run python scripts/run_recovery.py                       # every trigger
+    uv run python scripts/run_recovery.py --recovery configs/recovery/return_home.yaml \
+        --max-steps 400 --out artifacts/recovery/return_home    # go home, try again
 """
 
 from __future__ import annotations
@@ -76,6 +78,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live", action="store_true", help="run from reset, not from the trigger")
     parser.add_argument("--gifs", type=int, default=0, help="save GIFs of the first N episodes")
     parser.add_argument("--out", type=Path, default=Path("artifacts/recovery/run"))
+    parser.add_argument(
+        "--max-steps", type=int, help="episode step cap (default: the suite's, 280)"
+    )
     ShardLayout.add_args(parser)
     args = parser.parse_args(argv)
 
@@ -99,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     runtime = build_runtime(cfg)
     obs = ObsPipeline(runtime.processors)
     decide = Decider(runtime.policy, runtime.processors, cfg.record.k_samples, StageTimer())
-    args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / "recovered_sim_states").mkdir(parents=True, exist_ok=True)
     # Each episode is saved as it finishes, and a re-run into the same --out
     # skips the ones already there: a full run is hours of GPU.
     saved = args.out / "episodes.jsonl"
@@ -127,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 states = load_sim_state(layout.privileged_root, args.shard, index)
                 assert states is not None, f"{args.shard} episode {index} has no sim state"
-                branch = Branch(trigger, states[trigger])
+                branch = Branch(trigger, states[trigger], start_sim_state=states[0])
             outcome = run_guarded_episode(
                 obs,
                 decide,
@@ -135,7 +140,13 @@ def main(argv: list[str] | None = None) -> int:
                 spec,
                 branch=branch,
                 keep_frames=i < args.gifs,
+                max_steps=args.max_steps,
             )
+            if outcome.recovered_sim_states:
+                np.save(
+                    args.out / "recovered_sim_states" / f"episode_{index:03d}.npy",
+                    np.stack(outcome.recovered_sim_states),
+                )
             if outcome.frames:
                 save_gif(outcome.frames, args.out / "gifs" / f"episode_{index:03d}.gif")
             rows.append(_row(episode, trigger, outcome))
@@ -175,6 +186,8 @@ def main(argv: list[str] | None = None) -> int:
         "mean_extra_steps": float(np.mean([r["n_steps"] - r["guard_off_n_steps"] for r in rows])),
         "mean_recoveries": float(np.mean([len(r["attempts"]) for r in rows])),
         "mode": "live" if args.live else "branch",
+        "recovery_motion": recovery.reposition.mode,
+        "max_steps": args.max_steps,
         "rule": str(args.rule),
     }
     if args.live:

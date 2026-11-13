@@ -2,8 +2,9 @@
 
 **Status: built and piloted (2026-11-04). Lift-and-back-off does not help this policy:
 on 20 guarded episodes it rescued 1 failure and spoiled 1 good run, a change of 0.**
-The kill criterion below is met, so the full run was not made. The original design
-note follows the results.
+The kill criterion below is met, so the full run was not made. A second motion, sending
+the arm back to its start pose (2026-11-12), rescued 3 and spoiled 1 on the same 20
+episodes: +0.10, not significant (p = 0.625). The original design note follows the results.
 
 The scope line in the README stands: *the guard halts and flags, it does not replan.*
 
@@ -47,6 +48,53 @@ early (steps 48–101), recovery rescued 1.
   the arm opens, lifts clear and backs off. In episode 2 the guard fired with a bowl in
   the gripper, and opening dropped it back on the table, the near-grasp case flagged
   below.
+
+## Second motion: send the arm home (2026-11-12)
+
+The policy succeeds on 70% of clean runs from the start pose, so the second motion
+sends the arm back there and lets the policy start over: open the gripper, lift 10 cm,
+then drive the hand to its recorded start position and rotation (within 1 cm and 0.1 rad),
+settle (`reposition.mode: home`, `configs/recovery/return_home.yaml`). One retry per
+episode, the step cap raised to 400 so a retry has as long as a fresh run.
+
+**Is there anything to win? The headroom test.** Before trusting a retry, each of the 30
+clean failures was re-run from its own start state twice under fresh flow noise, no guard
+(`scripts/retry_headroom.py`, cap 160): 25 of 60 tries succeeded (42%), and 17 of the 30
+failed scenes succeeded on at least one try. Task 2 and task 5 succeeded every time;
+tasks 0, 6 and 8 never did. So a fresh start rescues a lot of failures, in principle.
+
+**The result.** On the same 20 triggered episodes as the first pilot:
+
+| | cooldown 20 | cooldown 140 (clock only) |
+|---|---:|---:|
+| rescued (failure → success) | 3 (episodes 17, 29, 31) | 3 (same) |
+| spoiled (success → failure) | 1 (episode 63) | 1 (same) |
+| paired success-rate change | +0.10 (McNemar p = 0.625) | +0.10 (p = 0.625) |
+| extra steps per episode | 15.5 | 46.7 |
+
+The motion itself works: in the sim the hand reaches within about 1 cm and 0.02 rad of
+its start pose in 50–75 steps, and the camera frames match the real start view. The
+second run, with the guard's signal silenced for 140 steps after the retry, gave
+identical outcomes, so the guard firing early on the retry is not what holds it back.
+
+**Why a retry from home is worse than a fresh try.**
+- *The scene has moved.* When the arm reaches home, the bowl sits more than 5 cm from
+  where the episode started in 7 of 20 episodes (31, 50, 56, 58, 61, 63, 68). In four of
+  them it moved about 25 cm: the bowl was raised about 1.3 cm when the guard fired, so the
+  arm was carrying it, and opening the gripper dropped it somewhere new.
+- *Even untouched scenes do worse.* On the 13 scenes where the bowl moved under 4 cm,
+  fresh tries succeeded 10 of 26 times (38%) but retries from home 2 of 13. The joint
+  angles at home are within 0.05 rad of the start on 12 of them (episode 29 is 0.38 rad
+  off and succeeded anyway), so the arm's posture does not explain it. What remains:
+  chance (about 5 rescues expected at 38%, 2 seen, on 13 episodes), the different noise
+  draws, and the plate shifting 1–2 cm in several episodes. Episodes 23 and 36 succeeded
+  on both fresh tries and failed after returning home.
+
+**Where it stands.** +10 points on 20 episodes is not distinguishable from zero. The
+carried-bowl case is a fixable design problem (don't open the gripper while holding the
+object); the gap on untouched scenes needs more episodes and more retry seeds per
+episode before it means anything. Results in `artifacts/recovery/return_home/`,
+`artifacts/recovery/return_home_clock/` and `artifacts/recovery/retry_headroom/`.
 
 **What would be next, if anything.** Re-selection has no headroom (the pre-test below).
 Re-wording the instruction is the remaining cheap recovery. A recovery that changes the

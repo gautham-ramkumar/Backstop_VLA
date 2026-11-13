@@ -5,10 +5,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from pydantic import ValidationError
+from scipy.spatial.transform import Rotation
 
 from backstop.recover.reposition import (
     GRIPPER_OPEN,
     METRES_PER_UNIT,
+    RADIANS_PER_UNIT,
+    ROTATION,
     TRANSLATION,
     Phase,
     RepositionConfig,
@@ -84,3 +87,30 @@ def test_config_rejects_out_of_range_values() -> None:
         RepositionConfig(max_action=1.5)
     with pytest.raises(ValidationError):
         RepositionConfig(lift_m=-0.1)
+
+
+HOME = np.array([-0.30, 0.05, 1.20, 3.0, 0.2, -0.3, 0.039, -0.039])
+
+
+def test_home_mode_returns_the_hand_to_its_start_position_and_rotation() -> None:
+    """Toy arm whose hand also turns by `lag` of the requested world-frame rotation."""
+    config = RepositionConfig(mode="home", max_steps_per_phase=200)
+    motion = RepositionMotion(config, START, home_state=HOME)
+    state = START.copy()
+    for _ in range(4 * 200):
+        action = motion.next_action(state)
+        if action is None:
+            break
+        state[EEF_POS] += 0.25 * action[TRANSLATION] * METRES_PER_UNIT
+        turn = Rotation.from_rotvec(0.25 * action[ROTATION] * RADIANS_PER_UNIT)
+        state[3:6] = (turn * Rotation.from_rotvec(state[3:6])).as_rotvec()
+    else:
+        raise AssertionError("return home did not finish")
+    assert np.linalg.norm(state[EEF_POS] - HOME[EEF_POS]) <= config.tolerance_m
+    error = Rotation.from_rotvec(HOME[3:6]) * Rotation.from_rotvec(state[3:6]).inv()
+    assert np.linalg.norm(error.as_rotvec()) <= config.rotation_tolerance_rad
+
+
+def test_home_mode_needs_the_start_pose() -> None:
+    with pytest.raises(ValueError, match="start pose"):
+        RepositionMotion(RepositionConfig(mode="home"), START)

@@ -12,6 +12,11 @@ arm to where it sees the scene differently, then hands control back:
    holding the lifted height.
 4. SETTLE: hold still so the arm stops swinging before the policy looks.
 
+`mode: home` makes BACK return to the pose the arm started the episode in
+instead: its position and its hand rotation, so the policy re-attempts from
+the view it succeeds from 70% of the time, with the objects left where they
+now are.
+
 A phase ends when the hand is within `tolerance_m` of its goal, or after
 `max_steps_per_phase`, whichever comes first. Feedback is the hand position
 in `observation.state`, which the policy already sees. It never uses sim
@@ -28,16 +33,21 @@ counting steps.
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 import numpy as np
 from pydantic import BaseModel, Field
+from scipy.spatial.transform import Rotation
 
 from backstop.schema import ACTION_DIM, EEF_POS, GRIPPER_INDEX
 
 GRIPPER_OPEN = -1.0
 # The action's first three dimensions move the hand in xyz.
 TRANSLATION = slice(0, 3)
+ROTATION = slice(3, 6)
 METRES_PER_UNIT = 0.05  # OSC_POSE output_max for position
+RADIANS_PER_UNIT = 0.5  # OSC_POSE output_max for rotation
+EEF_AXIS_ANGLE = slice(3, 6)  # observation.state's hand rotation
 
 
 class Phase(Enum):
@@ -48,6 +58,8 @@ class Phase(Enum):
 
 
 class RepositionConfig(BaseModel):
+    mode: Literal["back_off", "home"] = "back_off"
+    rotation_tolerance_rad: float = Field(default=0.1, gt=0.0)
     lift_m: float = Field(default=0.10, ge=0.0)
     back_m: float = Field(default=0.08, ge=0.0)
     open_steps: int = Field(default=5, ge=0)
@@ -66,14 +78,24 @@ class RepositionConfig(BaseModel):
 class RepositionMotion:
     """Call `next_action(state)` once per control step until it returns None."""
 
-    def __init__(self, config: RepositionConfig, start_state: np.ndarray) -> None:
+    def __init__(
+        self,
+        config: RepositionConfig,
+        start_state: np.ndarray,
+        home_state: np.ndarray | None = None,
+    ) -> None:
         self.config = config
         start = np.asarray(start_state, dtype=np.float64)[EEF_POS]
         lifted = start + np.array([0.0, 0.0, config.lift_m])
-        self._goals = {
-            Phase.LIFT: lifted,
-            Phase.BACK: lifted + np.array([-config.back_m, 0.0, 0.0]),
-        }
+        back = lifted + np.array([-config.back_m, 0.0, 0.0])
+        self._home_rotation: Rotation | None = None
+        if config.mode == "home":
+            if home_state is None:
+                raise ValueError("mode 'home' needs the arm's start pose")
+            home = np.asarray(home_state, dtype=np.float64)
+            back = home[EEF_POS]
+            self._home_rotation = Rotation.from_rotvec(home[EEF_AXIS_ANGLE])
+        self._goals = {Phase.LIFT: lifted, Phase.BACK: back}
         self._hold_steps = {Phase.OPEN: config.open_steps, Phase.SETTLE: config.settle_steps}
         self._phases = iter(Phase)
         self.phase: Phase | None = next(self._phases)
@@ -81,7 +103,7 @@ class RepositionMotion:
 
     def next_action(self, state: np.ndarray) -> np.ndarray | None:
         position = np.asarray(state, dtype=np.float64)[EEF_POS]
-        while self.phase is not None and self._phase_done(position):
+        while self.phase is not None and self._phase_done(position, state):
             self.phase = next(self._phases, None)
             self._steps_in_phase = 0
         if self.phase is None:
@@ -89,17 +111,31 @@ class RepositionMotion:
         self._steps_in_phase += 1
         action = np.zeros(ACTION_DIM)
         action[GRIPPER_INDEX] = GRIPPER_OPEN
+        limit = self.config.max_action
         if self.phase in self._goals:
             error = self._goals[self.phase] - position
-            limit = self.config.max_action
             action[TRANSLATION] = np.clip(error / METRES_PER_UNIT, -limit, limit)
+        if self.phase is Phase.BACK and self._home_rotation is not None:
+            turn = self._rotation_error(state)
+            action[ROTATION] = np.clip(turn / RADIANS_PER_UNIT, -limit, limit)
         return action
 
-    def _phase_done(self, position: np.ndarray) -> bool:
+    def _rotation_error(self, state: np.ndarray) -> np.ndarray:
+        """World-frame rotation vector that turns the hand to its start rotation."""
+        assert self._home_rotation is not None
+        current = Rotation.from_rotvec(np.asarray(state, dtype=np.float64)[EEF_AXIS_ANGLE])
+        return (self._home_rotation * current.inv()).as_rotvec()
+
+    def _phase_done(self, position: np.ndarray, state: np.ndarray) -> bool:
         assert self.phase is not None
         if self._steps_in_phase >= self.config.max_steps_per_phase:
             return True
         if self.phase in self._hold_steps:
             return self._steps_in_phase >= self._hold_steps[self.phase]
         distance = float(np.linalg.norm(self._goals[self.phase] - position))
+        if self.phase is Phase.BACK and self._home_rotation is not None:
+            turned = (
+                np.linalg.norm(self._rotation_error(state)) <= self.config.rotation_tolerance_rad
+            )
+            return distance <= self.config.tolerance_m and bool(turned)
         return distance <= self.config.tolerance_m

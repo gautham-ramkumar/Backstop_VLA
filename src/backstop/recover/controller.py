@@ -61,6 +61,8 @@ class RecoveryController:
         self.guard = OnlineGuard(rule, cooldown=config.cooldown_steps)
         self.attempts: list[Attempt] = []
         self.halted_at: int | None = None
+        # Where the arm started (`observation.state`): a return-home recovery's goal.
+        self.home_state: np.ndarray | None = None
         self._motion: RepositionMotion | None = None
 
     @property
@@ -80,7 +82,7 @@ class RecoveryController:
             self.halted_at = step
             return Verdict.HALT
         self.attempts.append(Attempt(step, reason))
-        self._motion = RepositionMotion(self.config.reposition, state)
+        self._motion = RepositionMotion(self.config.reposition, state, home_state=self.home_state)
         return Verdict.RECOVER
 
     def motion_action(self, state: np.ndarray, step: int) -> np.ndarray | None:

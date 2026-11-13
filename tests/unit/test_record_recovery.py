@@ -36,7 +36,9 @@ class RecordingVecEnv(FakeVecEnv):
         return super().step(action)
 
 
-def _run(line: float, config: RecoveryConfig) -> tuple[Any, RecordingVecEnv, FakeChunkPolicy]:
+def _run(
+    line: float, config: RecoveryConfig, **kwargs: Any
+) -> tuple[Any, RecordingVecEnv, FakeChunkPolicy]:
     env_pre, _ = LiberoEnv(task="libero_spatial").get_env_processors()
     processors = Processors(env_pre, lambda o: o, lambda a: a, lambda t: t)
     policy, env = FakeChunkPolicy(), RecordingVecEnv()
@@ -47,6 +49,7 @@ def _run(line: float, config: RecoveryConfig) -> tuple[Any, RecordingVecEnv, Fak
         RecoveryController(rule, config),
         EpisodeSpec(env, 0, 0, "libero_spatial", 0),
         keep_frames=True,
+        **kwargs,
     )
     return outcome, env, policy
 
@@ -70,3 +73,8 @@ def test_with_no_attempts_left_the_guard_halts_the_run() -> None:
     outcome, env, _ = _run(0.0, RecoveryConfig(max_attempts=0))
     assert (outcome.success, outcome.n_steps, outcome.halted_at) == (False, 0, 0)
     assert env.actions == []
+
+
+def test_max_steps_replaces_the_step_cap() -> None:
+    outcome, env, _ = _run(np.inf, RecoveryConfig(), max_steps=2)
+    assert (outcome.success, outcome.n_steps, len(env.actions)) == (False, 2, 2)

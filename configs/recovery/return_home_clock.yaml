@@ -1,0 +1,28 @@
+# Guarded recovery, return-home variant (src/backstop/recover/reposition.py,
+# mode: home). When the guard fires the arm opens, lifts 10 cm, and returns to
+# the pose it started the episode in, position and hand rotation; the policy
+# then re-attempts with the objects where they now are.
+#
+# One recovery per episode: going home takes 50-75 steps (measured on four
+# failed clean episodes), and the stopwatch restarts after it, so a second
+# would add roughly another 200 steps. The second time the guard fires, it
+# halts the run as the plain guard would.
+#
+# Clock-only retry: the cooldown is the stopwatch's 140 steps, so after going
+# home the disagreement signal cannot end the retry; only the stopwatch can.
+# With cooldown 20 the signal fired again 38-62 steps after the arm got home
+# in 6 of 20 pilot episodes (artifacts/recovery/return_home), cutting retries
+# that a fresh start succeeds on (episode 50: 2 of 2).
+max_attempts: 1
+cooldown_steps: 140
+
+reposition:
+  mode: home
+  lift_m: 0.10
+  open_steps: 5
+  settle_steps: 5
+  # The trip home ran up to 48 steps; 30 would stop it short of the start pose.
+  max_steps_per_phase: 60
+  max_action: 0.5
+  tolerance_m: 0.01
+  rotation_tolerance_rad: 0.1
